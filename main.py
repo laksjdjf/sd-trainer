@@ -1,14 +1,11 @@
 import argparse
 import torch
 from torch.utils.data import DataLoader
-import torchvision
-import transformers
-import diffusers
 import os
-import tqdm
+from tqdm import tqdm
 import numpy as np
 
-from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, StableDiffusionPipeline
+from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, StableDiffusionPipeline ,DDIMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils.dataset import SimpleDataset
@@ -17,32 +14,44 @@ from utils.dataset import SimpleDataset
 ###コマンドライン引数#########################################################################
 parser = argparse.ArgumentParser(description='Stable Diffusion Finetuner')
 parser.add_argument('--model', type=str, required=True, help='pretrained model path')
-parser.add_argument('--input', type=str, required=True, help='input path')
+parser.add_argument('--dataset', type=str, required=True, help='dataset path')
 parser.add_argument('--output', type=str, required=True, help='output path')
-parser.add_argument('--resolution', type=int, default=512, help='resolution of images')
+parser.add_argument('--image_log', type=str, required=True, help='image log path')
+parser.add_argument('--resolution', type=str, default="512,512", help='resolution of images like width,height')
 parser.add_argument('--batch_size', type=int, default=4, help='batch size')
-parser.add_argument('--batch_size', type=float, default=5e-6, help='learning rate')
+parser.add_argument('--lr', type=float, default=5e-6, help='learning rate')
 parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
+parser.add_argument('--save_n_epochs', type=int, default=5, help='save')
 parser.add_argument('--amp', action='store_true', help='use auto mixed precision')
+
 args = parser.parse_args()
 ############################################################################################
 
 def main():
     ###学習準備##############################################################################
+    #output pathをつくる。
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    if not os.path.exists(args.image_log):
+        os.makedirs(args.image_log)    
+        
+    #画像サイズ
+    size = args.resolution.split(",") 
+    size = (int(size[0]),int(size[-1]))
     
     #device,dtype
     device = torch.device('cuda')
-    weight_dtype = torch.float16 if args.float16 else torch.float32
+    weight_dtype = torch.float16 if torch.float16 else torch.float32
     
     #モデルのロード、勾配無効や推論モードに移行
     tokenizer = CLIPTokenizer.from_pretrained(args.model, subfolder='tokenizer')
     
     text_encoder = CLIPTextModel.from_pretrained(args.model, subfolder='text_encoder')
-    text_encoder.required_grad_(False)
+    text_encoder.requires_grad_(False)
     text_encoder.eval()
     
     vae = AutoencoderKL.from_pretrained(args.model, subfolder='vae')
-    vae.required_grad_(False)
+    vae.requires_grad_(False)
     vae.eval()
 
     unet = UNet2DConditionModel.from_pretrained(args.model, subfolder='unet')
@@ -50,7 +59,7 @@ def main():
         unet.set_use_memory_efficient_attention_xformers(True)
     except:
         print("cant apply xformers. using normal unet !!!")
-    unet.required_grad_(True)
+    unet.requires_grad_(True)
     unet.train()
     
     #AMP用のスケーラー
@@ -60,8 +69,9 @@ def main():
     try:
         import bitsandbytes as bnb
         optimizer_cls = bnb.optim.AdamW8bit
+        print('apply AdamW8bit optimizer !')
     except:
-        print('cant import bitsandbytes, using regular Adam optimizer')
+        print('cant import bitsandbytes, using regular Adam optimizer !')
         optimizer_cls = torch.optim.AdamW
     
     optimizer = optimizer_cls(unet.parameters(),lr=args.lr)
@@ -78,18 +88,22 @@ def main():
     )
     
     #データローダー
-    dataset = SimpleDataset(args.input)
-    dataloader = DataLoader(dataset,batch_size=args.batch_size,num_workers=8)
-
+    dataset = SimpleDataset(args.dataset,size)
+    dataloader = DataLoader(dataset,batch_size=args.batch_size,num_workers=2,shuffle=True)
+    
+    #プログレスバー
+    progress_bar = tqdm(range((args.epochs) * len(dataloader)), desc="Total Steps", leave=False)
+    loss_ema = 0 
+    
     #学習ループ
-    for epoch in range(args.epoch):
-        for batch in tqdm(dataloader):
+    for epoch in range(args.epochs):
+        for batch in dataloader:
             #テキスト埋め込みベクトル
-            tokens = tokenizer(batch["caption"], max_length=tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids
-            encoder_hidden_states = text_encoder(token_tensor, output_hidden_states=True).last_hidden_state
+            tokens = tokenizer(batch["caption"], max_length=tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids.to(device)
+            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
             
             #VAEによる潜在変数
-            latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample() * 0.18215 #正規化
+            latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * 0.18215 #正規化
             
             #ノイズを生成
             noise = torch.randn_like(latents)
@@ -109,23 +123,44 @@ def main():
             #損失は実ノイズと推定ノイズの誤差である。v_prediction系には対応していない。
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
             
+            if loss_ema is None:
+                loss_ema = loss.item()
+            else:
+                loss_ema = loss_ema * 0.9 + loss.item() * 0.1
+            
             #混合精度学習の場合アンダーフローを防ぐために自動でスケーリングしてくれるらしい。
             scaler.scale(loss).backward()
+            #勾配降下
             scaler.step(optimizer)
             scaler.update()
-            #勾配降下
+            
+            #勾配リセット
             optimizer.zero_grad()
-    
-        print(f'save in {epoch} epochs')
-        pipeline = StableDiffusionPipeline.from_pretrained(
-                args.model,
-                text_encoder=text_encoder,
-                vae=vae,
-                unet=unet,
-                tokenizer=tokenizer,
-                scheduler=DDIMScheduler.from_pretrained(args.model, subfolder="scheduler")
+            
+            #プログレスバー更新
+            logs={"loss":loss_ema}
+            progress_bar.update(1)
+            progress_bar.set_postfix(logs)
+        
+        #モデルのセーブと検証画像生成
+        if epoch % args.save_n_epochs == args.save_n_epochs - 1:
+            print(f'save checkpoint !')
+            pipeline = StableDiffusionPipeline.from_pretrained(
+                    args.model,
+                    text_encoder=text_encoder,
+                    vae=vae,
+                    unet=unet,
+                    tokenizer=tokenizer,
+                    scheduler=DDIMScheduler.from_pretrained(args.model, subfolder="scheduler"),
+                    feature_extractor = None,
+                    safety_checker = None
             )
-        pipeline.save_pretrained(f'{args.output_path}')
+            with torch.autocast('cuda', enabled=args.amp):    
+                image = pipeline(batch["caption"][0],width=size[0],height=size[1]).images[0]
+            image.save(os.path.join(args.image_log,f'image_log_{str(epoch).zfill(3)}.png'))
+            pipeline.save_pretrained(f'{args.output}')
+            del pipeline
+        
 if __name__ == "__main__":
     main()
 
