@@ -41,7 +41,7 @@ def main():
     
     #device,dtype
     device = torch.device('cuda')
-    weight_dtype = torch.float16 if torch.float16 else torch.float32
+    weight_dtype = torch.float16 if args.amp else torch.float32
     
     #モデルのロード、勾配無効や推論モードに移行
     tokenizer = CLIPTokenizer.from_pretrained(args.model, subfolder='tokenizer')
