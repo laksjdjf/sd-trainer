@@ -23,7 +23,7 @@ parser.add_argument('--lr', type=float, default=5e-6, help='learning rate')
 parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
 parser.add_argument('--save_n_epochs', type=int, default=5, help='save')
 parser.add_argument('--amp', action='store_true', help='use auto mixed precision')
-
+parser.add_argument('--gradient_checkpointing', action='store_true', help='use gradient checkpointing')
 args = parser.parse_args()
 ############################################################################################
 
@@ -61,6 +61,10 @@ def main():
         print("cant apply xformers. using normal unet !!!")
     unet.requires_grad_(True)
     unet.train()
+    
+    #勾配チェックポイントによるVRAM削減（計算時間増）
+    if args.gradient_checkpointing:
+        unet.enable_gradient_checkpointing()
     
     #AMP用のスケーラー
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
