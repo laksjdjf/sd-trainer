@@ -12,34 +12,43 @@ from utils.dataset import SimpleDataset
 
 
 ###コマンドライン引数#########################################################################
-parser = argparse.ArgumentParser(description='Stable Diffusion Finetuner')
-parser.add_argument('--model', type=str, required=True, help='pretrained model path')
-parser.add_argument('--dataset', type=str, required=True, help='dataset path')
-parser.add_argument('--output', type=str, required=True, help='output path')
-parser.add_argument('--image_log', type=str, required=True, help='image log path')
-parser.add_argument('--resolution', type=str, default="512,512", help='resolution of images like width,height')
-parser.add_argument('--batch_size', type=int, default=4, help='batch size')
-parser.add_argument('--lr', type=float, default=5e-6, help='learning rate')
-parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
-parser.add_argument('--save_n_epochs', type=int, default=5, help='save')
-parser.add_argument('--amp', action='store_true', help='use auto mixed precision')
-parser.add_argument('--gradient_checkpointing', action='store_true', help='use gradient checkpointing')
+parser = argparse.ArgumentParser(description='StableDiffusionの訓練コード')
+parser.add_argument('--model', type=str, required=True, help='学習済みモデルパス（diffusers）')
+parser.add_argument('--dataset', type=str, required=True, help='データセットのパス')
+parser.add_argument('--output', type=str, required=True, help='学習チェックポイントの出力先')
+parser.add_argument('--image_log', type=str, required=True, help='検証画像の出力先')
+parser.add_argument('--resolution', type=str, default="512,512", help='画像サイズ。"幅,高さ"で選択、もしくは"長さ"で正方形になる')
+parser.add_argument('--batch_size', type=int, default=4, help='バッチサイズ')
+parser.add_argument('--lr', type=str, default="5e-6", help='学習率、"5e-6,1e-4"でtext encoderが5e-6、unetが1e-4になる。"5e-6"とすると両方5e-6')
+parser.add_argument('--train_encoder', action='store_true', help='テキストエンコーダを学習する')
+parser.add_argument('--epochs', type=int, default=10, help='エポック数')
+parser.add_argument('--save_n_epochs', type=int, default=5, help='何エポックごとにセーブするか')
+parser.add_argument('--amp', action='store_true', help='AMPを利用する')
+parser.add_argument('--gradient_checkpointing', action='store_true', help='勾配チェックポイントを利用する（VRAM減計算時間増）')
 args = parser.parse_args()
 ############################################################################################
 
+
+#メイン処理
 def main():
     ###学習準備##############################################################################
     #output pathをつくる。
     if not os.path.exists(args.output):
         os.makedirs(args.output)
+        
+    #image log pathを作る。
     if not os.path.exists(args.image_log):
         os.makedirs(args.image_log)    
-        
-    #画像サイズ
-    size = args.resolution.split(",") 
-    size = (int(size[0]),int(size[-1]))
     
-    #device,dtype
+    #学習率を定義
+    lrs = args.lr.split(",")
+    text_lr, unet_lr = float(lrs[0]), float(lrs[-1]) #長さが1の場合同じ値になる
+    
+    #画像サイズを定義
+    size = args.resolution.split(",") 
+    size = (int(size[0]),int(size[-1])) #長さが1の場合同じ値になる
+    
+    #device,dtypeを定義
     device = torch.device('cuda')
     weight_dtype = torch.float16 if args.amp else torch.float32
     
@@ -47,8 +56,8 @@ def main():
     tokenizer = CLIPTokenizer.from_pretrained(args.model, subfolder='tokenizer')
     
     text_encoder = CLIPTextModel.from_pretrained(args.model, subfolder='text_encoder')
-    text_encoder.requires_grad_(False)
-    text_encoder.eval()
+    text_encoder.requires_grad_(args.train_encoder)
+    text_encoder.train(args.train_encoder)
     
     vae = AutoencoderKL.from_pretrained(args.model, subfolder='vae')
     vae.requires_grad_(False)
@@ -78,10 +87,16 @@ def main():
         print('cant import bitsandbytes, using regular Adam optimizer !')
         optimizer_cls = torch.optim.AdamW
     
-    optimizer = optimizer_cls(unet.parameters(),lr=args.lr)
+    #パラメータ
+    params = [{'params':unet.parameters(),'lr':unet_lr}] #unetのパラメータ
+    if args.train_encoder:
+        params.append({'params':text_encoder.parameters(),'lr':text_lr})
+    
+    #最適化関数にパラメータを入れる
+    optimizer = optimizer_cls(params)
     
     #型の指定とGPUへの移動
-    text_encoder.to(device,dtype=weight_dtype)
+    text_encoder.to(device,dtype=torch.float32 if args.train_encoder else weight_dtype)
     vae.to(device,dtype=weight_dtype)
     unet.to(device,dtype=torch.float32) #学習対称はfloat32
     
@@ -147,8 +162,9 @@ def main():
             progress_bar.set_postfix(logs)
         
         #モデルのセーブと検証画像生成
+        print(f'{epoch} epoch 目が終わりました。訓練lossは{loss_ema}です。')
         if epoch % args.save_n_epochs == args.save_n_epochs - 1:
-            print(f'save checkpoint !')
+            print(f'チェックポイントをセーブするよ!')
             pipeline = StableDiffusionPipeline.from_pretrained(
                     args.model,
                     text_encoder=text_encoder,
@@ -161,9 +177,10 @@ def main():
             )
             with torch.autocast('cuda', enabled=args.amp):    
                 image = pipeline(batch["caption"][0],width=size[0],height=size[1]).images[0]
-            image.save(os.path.join(args.image_log,f'image_log_{str(epoch).zfill(3)}.png'))
+            image.save(os.path.join(args.image_log,f'image_log_epoch_{str(epoch).zfill(3)}.png'))
             pipeline.save_pretrained(f'{args.output}')
             del pipeline
+        
         
 if __name__ == "__main__":
     main()
