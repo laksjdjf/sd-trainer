@@ -1,3 +1,5 @@
+#This code based on https://github.com/harubaru/waifu-diffusion/blob/main/trainer/diffusers_trainer.py
+
 import argparse
 import torch
 from torch.utils.data import DataLoader
@@ -80,10 +82,6 @@ def main():
         print("cant apply xformers. using normal unet !!!")
     unet.requires_grad_(True)
     unet.train()
-    
-    #勾配チェックポイントによるVRAM削減（計算時間増）
-    if args.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
     
     #AMP用のスケーラー
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
