@@ -7,11 +7,11 @@ import glob
 import json
 import random
 import numpy as np
+from transformers import CLIPTokenizer
 
 class SimpleDataset(Dataset):
     def __init__(self, path, size):
         self.file_list = []
-        
         #画像リスト
         [self.file_list.extend(glob.glob(f'{path}' + '/*.' + e)) for e in ['jpg', 'jpeg', 'png', 'bmp', 'webp']]
         self.transform = transforms.Compose(
@@ -35,13 +35,13 @@ class SimpleDataset(Dataset):
     
 #めんどくさいのでlatent cacheとメタデータがあることを前提とする
 class AspectDataset(Dataset):
-    def __init__(self, path, batch_size = 1):
+    def __init__(self, path, tokenizer: CLIPTokenizer, batch_size = 1):
         #メタデータは"(640,896)":["100","101",..]のようなbucketからファイルのリストを出す辞書
         with open(os.path.join(path,"buckets.json"),"r") as f:
             self.bucket2file = json.load(f)
         self.path = path
         self.batch_size = batch_size
-        
+        self.tokenizer = tokenizer
         #batchの取り出し方を初期化するメソッド
         self.init_batch_samples()
         
@@ -61,7 +61,8 @@ class AspectDataset(Dataset):
         for sample in samples:
             with open(os.path.join(self.path,sample + ".caption" ),"r") as f:
                 captions.append(f.read())
-        return {"latents":latents,"caption":captions}
+        tokens = self.tokenizer(captions, max_length=self.tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids
+        return {"latents":latents,"tokens":tokens}
                   
     def init_batch_samples(self):
         self.batch_samples = []
@@ -72,3 +73,7 @@ class AspectDataset(Dataset):
             self.batch_samples.extend([self.bucket2file[key][i:i+self.batch_size] for i in range(0,len(self.bucket2file[key]),self.batch_size)])
         #できたリストもシャッフル
         random.shuffle(self.batch_samples)
+        
+        
+        
+        
