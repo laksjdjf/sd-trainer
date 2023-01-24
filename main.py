@@ -8,7 +8,7 @@ import numpy as np
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, StableDiffusionPipeline ,DDIMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from utils.dataset import SimpleDataset
+from utils.dataset import SimpleDataset,AspectDataset
 from lora.lora import LoRANetwork
 
 ###コマンドライン引数#########################################################################
@@ -26,6 +26,7 @@ parser.add_argument('--save_n_epochs', type=int, default=5, help='何エポッ�
 parser.add_argument('--amp', action='store_true', help='AMPを利用する')
 parser.add_argument('--gradient_checkpointing', action='store_true', help='勾配チェックポイントを利用する（VRAM減計算時間増）')
 parser.add_argument('--lora', type=int, default=0, help='loraのランク、0だとloraを適用しない')
+parser.add_argument('--use_bucket', action='store_true', help='あらかじめbucketとlatentにする処理が必要')
 args = parser.parse_args()
 ############################################################################################
 
@@ -127,8 +128,12 @@ def main():
     )
     
     #データローダー
-    dataset = SimpleDataset(args.dataset,size)
-    dataloader = DataLoader(dataset,batch_size=args.batch_size,num_workers=2,shuffle=True)
+    if args.use_bucket:
+        dataset = AspectDataset(args.dataset,args.batch_size) #batch sizeはデータセット側で処理する
+        dataloader = DataLoader(dataset,batch_size=1,num_workers=2,shuffle=False,collate_fn = lambda x:x[0]) #shuffleはdataset側で処理する、Falseが必須。
+    else:
+        dataset = SimpleDataset(args.dataset,size)
+        dataloader = DataLoader(dataset,batch_size=args.batch_size,num_workers=2,shuffle=True)
     
     #プログレスバー
     progress_bar = tqdm(range((args.epochs) * len(dataloader)), desc="Total Steps", leave=False)
@@ -142,8 +147,11 @@ def main():
             encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
             
             #VAEによる潜在変数
-            latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * 0.18215 #正規化
-            
+            if args.use_bucket:
+                latents = batch['latents'].to(device) * 0.18215 #bucketを使う場合はあらかじめlatentを計算している
+            else:
+                latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * 0.18215 #正規化
+                
             #ノイズを生成
             noise = torch.randn_like(latents)
             bsz = latents.shape[0]
