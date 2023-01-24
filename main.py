@@ -160,10 +160,7 @@ def main():
             b_start = time.perf_counter()
             
             #テキスト埋め込みベクトル
-            if args.use_bucket:
-                tokens = batch["tokens"].to(device)
-            else:
-                tokens = tokenizer(batch["caption"], max_length=tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids.to(device)
+            tokens = tokenizer(batch["caption"], max_length=tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids.to(device)
             encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
             
             #VAEによる潜在変数
