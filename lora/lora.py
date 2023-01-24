@@ -1,4 +1,4 @@
-#### This code is based on to https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
+#### This code is based on https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
 
 import torch
 import math
