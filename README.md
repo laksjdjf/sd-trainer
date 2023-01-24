@@ -14,5 +14,6 @@ loraもつくったけど、kohya-ss氏のコードを簡略化して実装し�
 
 
 # Update
-2023/01/24 aspect bucketing+latent cache,前処理コード,wandbログ等々
+2023/01/24 aspect bucketing+latent cache,前処理コード,lora,wandbログ等々
+
 2023/01/23 計画開始
