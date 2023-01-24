@@ -61,8 +61,7 @@ class AspectDataset(Dataset):
         for sample in samples:
             with open(os.path.join(self.path,sample + ".caption" ),"r") as f:
                 captions.append(f.read())
-        tokens = self.tokenizer(captions, max_length=self.tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids
-        return {"latents":latents,"tokens":tokens}
+        return {"latents":latents,"caption":captions}
                   
     def init_batch_samples(self):
         self.batch_samples = []
