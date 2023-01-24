@@ -4,12 +4,19 @@ from torch.utils.data import DataLoader
 import os
 from tqdm import tqdm
 import numpy as np
+import time
 
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, StableDiffusionPipeline ,DDIMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils.dataset import SimpleDataset,AspectDataset
 from lora.lora import LoRANetwork
+
+
+#検証画像用のネガティブプロンプト
+NEGATIVE_PROMPT = "worst quality, low quality, medium quality, deleted, lowres, comic, bad anatomy,bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, jpeg artifacts, signature, watermark, username, blurry"
+
+NUMBER_OF_IMAGE_LOGS = 4
 
 ###コマンドライン引数#########################################################################
 parser = argparse.ArgumentParser(description='StableDiffusionの訓練コード')
@@ -27,6 +34,7 @@ parser.add_argument('--amp', action='store_true', help='AMPを利用する')
 parser.add_argument('--gradient_checkpointing', action='store_true', help='勾配チェックポイントを利用する（VRAM減計算時間増）')
 parser.add_argument('--lora', type=int, default=0, help='loraのランク、0だとloraを適用しない')
 parser.add_argument('--use_bucket', action='store_true', help='あらかじめbucketとlatentにする処理が必要')
+parser.add_argument('--wandb', action='store_true', help='wandbによるログ管理')
 args = parser.parse_args()
 ############################################################################################
 
@@ -129,7 +137,7 @@ def main():
     
     #データローダー
     if args.use_bucket:
-        dataset = AspectDataset(args.dataset,args.batch_size) #batch sizeはデータセット側で処理する
+        dataset = AspectDataset(args.dataset,tokenizer,args.batch_size) #batch sizeはデータセット側で処理する
         dataloader = DataLoader(dataset,batch_size=1,num_workers=2,shuffle=False,collate_fn = lambda x:x[0]) #shuffleはdataset側で処理する、Falseが必須。
     else:
         dataset = SimpleDataset(args.dataset,size)
@@ -137,13 +145,27 @@ def main():
     
     #プログレスバー
     progress_bar = tqdm(range((args.epochs) * len(dataloader)), desc="Total Steps", leave=False)
-    loss_ema = 0 
+    loss_ema = None 
+    
+    #wandb
+    if args.wandb:
+        import wandb
+        run = wandb.init(project="sd-trainer", name=args.output,dir=os.path.join(args.output,'wandb'))
+    
+    #全ステップ
+    global_step = 0
     
     #学習ループ
     for epoch in range(args.epochs):
         for batch in dataloader:
+            #時間計測
+            b_start = time.perf_counter()
+            
             #テキスト埋め込みベクトル
-            tokens = tokenizer(batch["caption"], max_length=tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids.to(device)
+            if args.use_bucket:
+                tokens = batch["tokens"].to(device)
+            else:
+                tokens = tokenizer(batch["caption"], max_length=tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids.to(device)
             encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
             
             #VAEによる潜在変数
@@ -184,10 +206,22 @@ def main():
             #勾配リセット
             optimizer.zero_grad()
             
+            #ステップ更新
+            global_step += 1
+            
+            #時間計測
+            b_end = time.perf_counter()
+            time_per_steps = b_end - b_start
+            samples_per_time = bsz / time_per_steps
+            
             #プログレスバー更新
-            logs={"loss":loss_ema}
+            logs={"loss":loss_ema,"sample_per_second":samples_per_time}
             progress_bar.update(1)
             progress_bar.set_postfix(logs)
+            
+            #wandbのlog更新
+            if args.wandb:    
+                run.log(logs, step=global_step)
         
         #モデルのセーブと検証画像生成
         print(f'{epoch} epoch 目が終わりました。訓練lossは{loss_ema}です。')
@@ -203,13 +237,29 @@ def main():
                     feature_extractor = None,
                     safety_checker = None
             )
-            with torch.autocast('cuda', enabled=args.amp):    
-                image = pipeline(batch["caption"][0],width=size[0],height=size[1]).images[0]
-            image.save(os.path.join(args.image_log,f'image_log_epoch_{str(epoch).zfill(3)}.png'))
+            
+            #検証画像生成
+            with torch.autocast('cuda', enabled=args.amp):
+                num = min(bsz,NUMBER_OF_IMAGE_LOGS) #基本4枚だがバッチサイズ次第
+                images = []
+                for i in range(num):
+                    prompt = batch["caption"][i]    
+                    image = pipeline(prompt,width=size[0],height=size[1],negative_prompt=NEGATIVE_PROMPT).images[0]
+                    if args.wandb:    
+                        images.append(wandb.Image(image,caption=prompt))
+                    else:
+                        images.append(image)
+            
+            if args.wandb:
+                run.log({'images': images}, step=global_step)
+            else:
+                [image.save(os.path.join(args.image_log,f'image_log_epoch_{str(epoch).zfill(3)}_{i}.png')) for i,image in enumerate(images)]
+            
             if args.lora:
                 network.save_weights(f'{args.output}.pt')
             else:
                 pipeline.save_pretrained(f'{args.output}')
+                
             del pipeline
         
         
