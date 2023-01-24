@@ -1,5 +1,3 @@
-#This code based on https://github.com/harubaru/waifu-diffusion/blob/main/trainer/diffusers_trainer.py
-
 import argparse
 import torch
 from torch.utils.data import DataLoader
@@ -37,6 +35,7 @@ parser.add_argument('--gradient_checkpointing', action='store_true', help='勾�
 parser.add_argument('--lora', type=int, default=0, help='loraのランク、0だとloraを適用しない')
 parser.add_argument('--use_bucket', action='store_true', help='あらかじめbucketとlatentにする処理が必要')
 parser.add_argument('--wandb', action='store_true', help='wandbによるログ管理')
+parser.add_argument('--up_only', action='store_true', help='up blocksのみの学習')
 args = parser.parse_args()
 ############################################################################################
 
@@ -80,14 +79,25 @@ def main():
         unet.set_use_memory_efficient_attention_xformers(True)
     except:
         print("cant apply xformers. using normal unet !!!")
-    unet.requires_grad_(True)
-    unet.train()
+        
+    #もうちょっと賢くしたいが・・・
+    if not args.up_only:    
+        unet.requires_grad_(True)
+        unet.train()
+    else:
+        unet.requires_grad_(False)
+        unet.up_blocks.requires_grad_(True)
+        unet.eval()
+        unet.up_blocks.train()
     
     #AMP用のスケーラー
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     
     #パラメータ
-    params = [{'params':unet.parameters(),'lr':unet_lr}] #unetのパラメータ
+    if not args.up_only:
+        params = [{'params':unet.parameters(),'lr':unet_lr}] #unetのパラメータ
+    else:
+        params = [{'params':unet.up_blocks.parameters(),'lr':unet_lr}] #unetのパラメータ
     if args.train_encoder:
         params.append({'params':text_encoder.parameters(),'lr':text_lr})
 
@@ -95,7 +105,7 @@ def main():
     if args.lora:
         unet.requires_grad_(False)
         text_encoder.requires_grad_(False)
-        network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora)
+        network = LoRANetwork(text_encoder if args.train_encoder else None, unet if not args.up_only else unet.up_blocks, args.lora)
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
     
     #最適化関数
@@ -117,7 +127,8 @@ def main():
             unet.enable_gradient_checkpointing()
             text_encoder.gradient_checkpointing_enable()
         else:
-            unet.conv_in.requires_grad_(True)
+            if not args.up_only:
+                unet.conv_in.requires_grad_(True)
             unet.enable_gradient_checkpointing()
     
     #型の指定とGPUへの移動
