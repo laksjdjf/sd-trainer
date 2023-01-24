@@ -9,7 +9,7 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, Stable
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils.dataset import SimpleDataset
-
+from lora.lora import LoRANetwork
 
 ###コマンドライン引数#########################################################################
 parser = argparse.ArgumentParser(description='StableDiffusionの訓練コード')
@@ -25,6 +25,7 @@ parser.add_argument('--epochs', type=int, default=10, help='エポック数')
 parser.add_argument('--save_n_epochs', type=int, default=5, help='何エポックごとにセーブするか')
 parser.add_argument('--amp', action='store_true', help='AMPを利用する')
 parser.add_argument('--gradient_checkpointing', action='store_true', help='勾配チェックポイントを利用する（VRAM減計算時間増）')
+parser.add_argument('--lora', type=int, default=0, help='loraのランク、0だとloraを適用しない')
 args = parser.parse_args()
 ############################################################################################
 
@@ -78,6 +79,18 @@ def main():
     #AMP用のスケーラー
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     
+    #パラメータ
+    params = [{'params':unet.parameters(),'lr':unet_lr}] #unetのパラメータ
+    if args.train_encoder:
+        params.append({'params':text_encoder.parameters(),'lr':text_lr})
+
+    #LoRAの準備
+    if args.lora:
+        unet.requires_grad_(False)
+        text_encoder.requires_grad_(False)
+        network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora)
+        params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
+    
     #最適化関数
     try:
         import bitsandbytes as bnb
@@ -87,18 +100,25 @@ def main():
         print('cant import bitsandbytes, using regular Adam optimizer !')
         optimizer_cls = torch.optim.AdamW
     
-    #パラメータ
-    params = [{'params':unet.parameters(),'lr':unet_lr}] #unetのパラメータ
-    if args.train_encoder:
-        params.append({'params':text_encoder.parameters(),'lr':text_lr})
-    
     #最適化関数にパラメータを入れる
     optimizer = optimizer_cls(params)
+    
+    #勾配チェックポイントによるVRAM削減（計算時間増）
+    if args.gradient_checkpointing:
+        if args.train_encoder:
+            text_encoder.text_model.embeddings.requires_grad_(True) #先頭のモジュールが勾配有効である必要があるらしい
+            unet.enable_gradient_checkpointing()
+            text_encoder.gradient_checkpointing_enable()
+        else:
+            unet.conv_in.requires_grad_(True)
+            unet.enable_gradient_checkpointing()
     
     #型の指定とGPUへの移動
     text_encoder.to(device,dtype=torch.float32 if args.train_encoder else weight_dtype)
     vae.to(device,dtype=weight_dtype)
     unet.to(device,dtype=torch.float32) #学習対称はfloat32
+    if args.lora:
+        network.to(device,dtype=torch.float32)
     
     #ノイズスケジューラー
     noise_scheduler = DDPMScheduler.from_pretrained(
@@ -135,8 +155,8 @@ def main():
             #steps数に応じてノイズを付与する
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
             
+            #推定ノイズ
             with torch.autocast("cuda",enabled=args.amp):
-                #推定ノイズ
                 noise_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 
             #損失は実ノイズと推定ノイズの誤差である。v_prediction系には対応していない。
@@ -178,7 +198,10 @@ def main():
             with torch.autocast('cuda', enabled=args.amp):    
                 image = pipeline(batch["caption"][0],width=size[0],height=size[1]).images[0]
             image.save(os.path.join(args.image_log,f'image_log_epoch_{str(epoch).zfill(3)}.png'))
-            pipeline.save_pretrained(f'{args.output}')
+            if args.lora:
+                network.save_weights(f'{args.output}.pt')
+            else:
+                pipeline.save_pretrained(f'{args.output}')
             del pipeline
         
         
