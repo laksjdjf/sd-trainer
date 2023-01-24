@@ -81,7 +81,7 @@ class LoRANetwork(torch.nn.Module):
         
 
     #見づらいのでメソッドにしちゃう
-    def create_modules(self,prefix, root_module: torch.nn.Module, target_replace_modules) -> list[LoRAModule]:
+    def create_modules(self,prefix, root_module: torch.nn.Module, target_replace_modules) -> list:
         loras = []
         for name, module in root_module.named_modules():
             if module.__class__.__name__ in target_replace_modules:
