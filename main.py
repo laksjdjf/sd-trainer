@@ -1,5 +1,3 @@
-#This code based on https://github.com/harubaru/waifu-diffusion/blob/main/trainer/diffusers_trainer.py
-
 import argparse
 import torch
 from torch.utils.data import DataLoader
@@ -37,6 +35,9 @@ parser.add_argument('--gradient_checkpointing', action='store_true', help='勾�
 parser.add_argument('--lora', type=int, default=0, help='loraのランク、0だとloraを適用しない')
 parser.add_argument('--use_bucket', action='store_true', help='あらかじめbucketとlatentにする処理が必要')
 parser.add_argument('--wandb', action='store_true', help='wandbによるログ管理')
+parser.add_argument('--up_only', action='store_true', help='up blocksのみの学習')
+parser.add_argument('--v_prediction', action='store_true', help='SDv2系（-baseではない）を使う場合に指定する')
+parser.add_argument('--step_range', type=str, default="0,1", help='学習対象のsampling step範囲を割合で指定する。')
 args = parser.parse_args()
 ############################################################################################
 
@@ -80,14 +81,25 @@ def main():
         unet.set_use_memory_efficient_attention_xformers(True)
     except:
         print("cant apply xformers. using normal unet !!!")
-    unet.requires_grad_(True)
-    unet.train()
+        
+    #もうちょっと賢くしたいが・・・
+    if not args.up_only:    
+        unet.requires_grad_(True)
+        unet.train()
+    else:
+        unet.requires_grad_(False)
+        unet.up_blocks.requires_grad_(True)
+        unet.eval()
+        unet.up_blocks.train()
     
     #AMP用のスケーラー
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     
     #パラメータ
-    params = [{'params':unet.parameters(),'lr':unet_lr}] #unetのパラメータ
+    if not args.up_only:
+        params = [{'params':unet.parameters(),'lr':unet_lr}] #unetのパラメータ
+    else:
+        params = [{'params':unet.up_blocks.parameters(),'lr':unet_lr}] #unetのパラメータ
     if args.train_encoder:
         params.append({'params':text_encoder.parameters(),'lr':text_lr})
 
@@ -95,7 +107,7 @@ def main():
     if args.lora:
         unet.requires_grad_(False)
         text_encoder.requires_grad_(False)
-        network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora)
+        network = LoRANetwork(text_encoder if args.train_encoder else None, unet if not args.up_only else unet.up_blocks, args.lora)
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
     
     #最適化関数
@@ -117,7 +129,8 @@ def main():
             unet.enable_gradient_checkpointing()
             text_encoder.gradient_checkpointing_enable()
         else:
-            unet.conv_in.requires_grad_(True)
+            if not args.up_only:
+                unet.conv_in.requires_grad_(True)
             unet.enable_gradient_checkpointing()
     
     #型の指定とGPUへの移動
@@ -132,6 +145,9 @@ def main():
         args.model,
         subfolder='scheduler',
     )
+    
+    #sampling stepの範囲を指定
+    step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in args.step_range.split(",")]
     
     #データローダー
     if args.use_bucket:
@@ -174,7 +190,7 @@ def main():
             bsz = latents.shape[0]
             
             #画像ごとにstep数を決める
-            timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
+            timesteps = torch.randint(step_range[0], step_range[1], (bsz,), device=latents.device)
             timesteps = timesteps.long()
 
             #steps数に応じてノイズを付与する
@@ -183,8 +199,10 @@ def main():
             #推定ノイズ
             with torch.autocast("cuda",enabled=args.amp):
                 noise_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                
-            #損失は実ノイズと推定ノイズの誤差である。v_prediction系には対応していない。
+            
+            if args.v_prediction:
+                noise = noise_scheduler.get_velocity(latents, noise, timesteps)
+            
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
             
             if loss_ema is None:
