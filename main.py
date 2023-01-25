@@ -36,6 +36,8 @@ parser.add_argument('--lora', type=int, default=0, help='loraのランク、0だ
 parser.add_argument('--use_bucket', action='store_true', help='あらかじめbucketとlatentにする処理が必要')
 parser.add_argument('--wandb', action='store_true', help='wandbによるログ管理')
 parser.add_argument('--up_only', action='store_true', help='up blocksのみの学習')
+parser.add_argument('--v_prediction', action='store_true', help='SDv2系（-baseではない）を使う場合に指定する')
+parser.add_argument('--step_range', type=str, default="0,1", help='学習対象のsampling step範囲を割合で指定する。')
 args = parser.parse_args()
 ############################################################################################
 
@@ -144,6 +146,9 @@ def main():
         subfolder='scheduler',
     )
     
+    #sampling stepの範囲を指定
+    step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in args.step_range.split(",")]
+    
     #データローダー
     if args.use_bucket:
         dataset = AspectDataset(args.dataset,tokenizer,args.batch_size) #batch sizeはデータセット側で処理する
@@ -185,7 +190,7 @@ def main():
             bsz = latents.shape[0]
             
             #画像ごとにstep数を決める
-            timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
+            timesteps = torch.randint(step_range[0], step_range[1], (bsz,), device=latents.device)
             timesteps = timesteps.long()
 
             #steps数に応じてノイズを付与する
@@ -194,8 +199,10 @@ def main():
             #推定ノイズ
             with torch.autocast("cuda",enabled=args.amp):
                 noise_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                
-            #損失は実ノイズと推定ノイズの誤差である。v_prediction系には対応していない。
+            
+            if args.v_prediction:
+                noise = noise_scheduler.get_velocity(latents, noise, timesteps)
+            
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
             
             if loss_ema is None:
