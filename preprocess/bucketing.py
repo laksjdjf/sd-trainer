@@ -100,5 +100,4 @@ if __name__ == '__main__':
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     buckets,ratios = make_buckets()
-    print(buckets)
     main()
