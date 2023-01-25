@@ -38,6 +38,7 @@ parser.add_argument('--wandb', action='store_true', help='wandbによるログ�
 parser.add_argument('--up_only', action='store_true', help='up blocksのみの学習')
 parser.add_argument('--v_prediction', action='store_true', help='SDv2系（-baseではない）を使う場合に指定する')
 parser.add_argument('--step_range', type=str, default="0,1", help='学習対象のsampling step範囲を割合で指定する。')
+parser.add_argument('--mask', action='store_true', help='顔部分以外をマスクする')
 args = parser.parse_args()
 ############################################################################################
 
@@ -109,7 +110,7 @@ def main():
         text_encoder.requires_grad_(False)
         network = LoRANetwork(text_encoder if args.train_encoder else None, unet if not args.up_only else unet.up_blocks, args.lora)
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
-    
+        
     #最適化関数
     try:
         import bitsandbytes as bnb
@@ -151,16 +152,12 @@ def main():
     
     #データローダー
     if args.use_bucket:
-        dataset = AspectDataset(args.dataset,tokenizer,args.batch_size) #batch sizeはデータセット側で処理する
+        dataset = AspectDataset(args.dataset,tokenizer = tokenizer,batch_size = args.batch_size,mask = args.mask) #batch sizeはデータセット側で処理する
         dataloader = DataLoader(dataset,batch_size=1,num_workers=2,shuffle=False,collate_fn = lambda x:x[0]) #shuffleはdataset側で処理する、Falseが必須。
     else:
         dataset = SimpleDataset(args.dataset,size)
         dataloader = DataLoader(dataset,batch_size=args.batch_size,num_workers=2,shuffle=True)
-    
-    #プログレスバー
-    progress_bar = tqdm(range((args.epochs) * len(dataloader)), desc="Total Steps", leave=False)
-    loss_ema = None 
-    
+
     #wandb
     if args.wandb:
         import wandb
@@ -169,9 +166,14 @@ def main():
     #全ステップ
     global_step = 0
     
+    #プログレスバー
+    progress_bar = tqdm(range((args.epochs) * len(dataloader)), desc="Total Steps", leave=False)
+    loss_ema = None #訓練ロスの指数平均
+    
     #学習ループ
     for epoch in range(args.epochs):
         for batch in dataloader:
+                        
             #時間計測
             b_start = time.perf_counter()
             
@@ -203,6 +205,12 @@ def main():
             if args.v_prediction:
                 noise = noise_scheduler.get_velocity(latents, noise, timesteps)
             
+            #顔部分以外をマスクして学ばせない。顔以外をマスクって・・・
+            if args.mask:
+                mask = batch["mask"].to(device)
+                noise = noise * mask
+                noise_pred = noise_pred * mask
+                
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
             
             if loss_ema is None:
@@ -238,6 +246,8 @@ def main():
         
         #モデルのセーブと検証画像生成
         print(f'{epoch} epoch 目が終わりました。訓練lossは{loss_ema}です。')
+        if args.lora and args.wandb:
+            run.log(network.weight_log(), step=global_step)
         if epoch % args.save_n_epochs == args.save_n_epochs - 1:
             print(f'チェックポイントをセーブするよ!')
             pipeline = StableDiffusionPipeline.from_pretrained(
@@ -278,4 +288,3 @@ def main():
         
 if __name__ == "__main__":
     main()
-
