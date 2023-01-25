@@ -129,3 +129,21 @@ class LoRANetwork(torch.nn.Module):
             save_file(state_dict, file)
         else:
             torch.save(state_dict, file)
+            
+    def weight_log(self):
+        state_dict = self.state_dict()
+        
+        means = {k:v.float().abs().mean() for k,v in state_dict.items()} 
+        
+        target_keys = ["lora_up","lora_down",
+                       "down_blocks","mid_block","up_blocks",
+                       "to_q","to_k","to_v","to_out",
+                       "ff_net_0","ff_net_2",
+                       "attn1","attn2"
+                      ]
+        
+        logs = {}
+        
+        for target_key in target_keys:
+            logs[target_key] = torch.stack([means[key] for key in means.keys() if target_key in key]).mean().item()
+        return logs
