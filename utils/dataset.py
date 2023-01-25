@@ -1,3 +1,5 @@
+#mask training refer to https://github.com/cloneofsimo/lora/discussions/96
+
 from PIL import Image
 import os
 import torch
@@ -35,7 +37,7 @@ class SimpleDataset(Dataset):
     
 #めんどくさいのでlatent cacheとメタデータがあることを前提とする
 class AspectDataset(Dataset):
-    def __init__(self, path, tokenizer: CLIPTokenizer, batch_size = 1):
+    def __init__(self, path, tokenizer: CLIPTokenizer, batch_size = 1, mask = False):
         #メタデータは"(640,896)":["100","101",..]のようなbucketからファイルのリストを出す辞書
         with open(os.path.join(path,"buckets.json"),"r") as f:
             self.bucket2file = json.load(f)
@@ -44,6 +46,9 @@ class AspectDataset(Dataset):
         self.tokenizer = tokenizer
         #batchの取り出し方を初期化するメソッド
         self.init_batch_samples()
+        
+        #マスクをするかどうか
+        self.mask = mask
         
     def __len__(self):
         return len(self.batch_samples) #通常の長さと違ってデータセットの数ではなくミニバッチの数である。
@@ -55,13 +60,22 @@ class AspectDataset(Dataset):
         samples = self.batch_samples[i]
         #latentを読み込む
         latents = torch.stack([torch.tensor(np.load(os.path.join(self.path, sample + ".npy"))) for sample in samples])
+        #なんかみんなやってるからやるけどこれなーんだ？
+        latents = latents.to(memory_format=torch.contiguous_format).float()
         
         #captionを読み込む
         captions = []
         for sample in samples:
             with open(os.path.join(self.path,sample + ".caption" ),"r") as f:
                 captions.append(f.read())
-        return {"latents":latents,"caption":captions}
+        
+        if self.mask:
+            masks = torch.stack([torch.tensor(np.load(os.path.join(self.path, sample + ".npz"))["arr_0"]).unsqueeze(0).repeat(4,1,1) for sample in samples])
+            masks.to(memory_format=torch.contiguous_format).float()
+        else:
+            masks = None
+            
+        return {"latents":latents,"caption":captions,"mask": masks}
                   
     def init_batch_samples(self):
         self.batch_samples = []
@@ -72,7 +86,4 @@ class AspectDataset(Dataset):
             self.batch_samples.extend([self.bucket2file[key][i:i+self.batch_size] for i in range(0,len(self.bucket2file[key]),self.batch_size)])
         #できたリストもシャッフル
         random.shuffle(self.batch_samples)
-        
-        
-        
         
