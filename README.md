@@ -1,3 +1,5 @@
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://github.com/laksjdjf/sd-trainer/blob/main/sd_trainer_for_colab.ipynb)
+
 # sd-trainer
 九龍城砦と化した訓練コードをなんとかするため、一から訓練コードを自分で書いてみようと思う。勉強にもなりそうだしな。
 かなりの部分を[waifu-diffusion](https://github.com/harubaru/waifu-diffusion)から援用するはず。
