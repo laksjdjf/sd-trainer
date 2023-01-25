@@ -83,7 +83,6 @@ def main():
     
     #メタデータを書き込む（どのファイルがどのbucketにあるかを保存しておく）
     meta = {}
-    print(results)
     for file,bucket in results:
         if bucket in meta:
             meta[bucket].append(file)
