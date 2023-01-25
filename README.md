@@ -6,7 +6,7 @@
 また様々な機能を[kohya-ss/sd-scripts](https://github.com/kohya-ss/sd-scripts)を参考にして九龍城砦の建築を目指す。あれ？
 
 # Usage
-使う人いないだろうけど自分用に書いておく、テストもしてない）
+使う人いないだろうけど自分用に書いておく、テストもしてない。
 
 use_bucketのコマンドライン引数で、SimpleDataset(すべて同じ解像度のデータ)かAspectDataset(異なるアスペクト比を使うデータ)か選べる。AspectDatasetを使う場合、前処理がいっぱい必要である。また個人的な事情でAspectDatasetを使う場合キャプションファイルの拡張子は.captionとする。
 
@@ -14,8 +14,12 @@ preprocessディレクトリには前処理用のコードがあり、基本的�
 
 loraもつくったけど、kohya-ss氏のコードを簡略化して実装している。互換性は今のところあると思うけど。。。
 
+mask学習にはcreate_mask.pyでマスクを作る必要がある。重みのダウンロードが必要。
+
 
 # Update
+2023/01/25 mask学習、sampling step制限、loraの重みを学習中に監視してみる
+
 2023/01/24 aspect bucketing+latent cache,前処理コード,lora,wandbログ等々
 
 2023/01/23 計画開始
