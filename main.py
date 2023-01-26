@@ -58,7 +58,7 @@ def main():
     minibatch_size = args.batch_size // args.minibatch_repeat
     
     #output pathをつくる。
-    if not os.path.exists(args.output):
+    if not os.path.exists(args.output) and not args.lora:
         os.makedirs(args.output)
         
     #image log pathを作る。
@@ -278,7 +278,7 @@ def main():
         print(f'{epoch+args.minibatch_repeat} epoch 目が終わりました。訓練lossは{loss_ema}です。')
         if args.lora and args.wandb:
             run.log(network.weight_log(), step=global_step)
-        if epoch % args.save_n_epochs == 0 and epoch >= args.save_n_epochs:
+        if (epoch + args.minibatch_repeat) % args.save_n_epochs == 0:
             print(f'チェックポイントをセーブするよ!')
             pipeline = StableDiffusionPipeline.from_pretrained(
                     args.model,
@@ -293,7 +293,7 @@ def main():
             
             #検証画像生成
             with torch.autocast('cuda', enabled=args.amp):
-                num = min(bsz,NUMBER_OF_IMAGE_LOGS) #基本4枚だがバッチサイズ次第
+                num = min(bsz // args.minibatch_repeat,NUMBER_OF_IMAGE_LOGS) #基本4枚だがバッチサイズ次第
                 images = []
                 generator = torch.Generator("cuda").manual_seed(4545)
                 for i in range(num):
