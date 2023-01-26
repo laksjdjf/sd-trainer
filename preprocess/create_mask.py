@@ -3,9 +3,14 @@ import os
 import cv2
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
+import argparse
 
-path = "org"
-output = "data"
+###コマンドライン引数#########################################################################
+parser = argparse.ArgumentParser()
+parser.add_argument('--path', type=str, required=True, help='datasetパス')
+parser.add_argument('--output_path', type=str, required=True, help='outputパス')
+args = parser.parse_args()
+############################################################################################
 
 def detect(file):
     classifier = cv2.CascadeClassifier('lbpcascade_animeface.xml')
@@ -33,4 +38,6 @@ def main():
     return 
 
 if __name__ == "__main__":
+    path = arg.path
+    output = args.output_path
     main() 
