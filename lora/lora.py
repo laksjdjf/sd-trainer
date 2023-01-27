@@ -49,11 +49,12 @@ class LoRAModule(torch.nn.Module):
     
 #LoRANetwork
 class LoRANetwork(torch.nn.Module):
-    def __init__(self, text_encoder, unet, lora_dim=4, multiplier=1.0, alpha=1) -> None:
+    def __init__(self, text_encoder, unet, lora_dim=4, target_block = "" ,multiplier=1.0, alpha=1) -> None:
         super().__init__()
         self.multiplier = multiplier
         self.lora_dim = lora_dim
         self.alpha = alpha
+        self.target_block = target_block
         
         #text encoderのloraを作る
         if text_encoder is not None:
@@ -84,7 +85,7 @@ class LoRANetwork(torch.nn.Module):
     def create_modules(self,prefix, root_module: torch.nn.Module, target_replace_modules) -> list:
         loras = []
         for name, module in root_module.named_modules():
-            if module.__class__.__name__ in target_replace_modules:
+            if module.__class__.__name__ in target_replace_modules and self.target_block in name:
                 for child_name, child_module in module.named_modules():
                     if child_module.__class__.__name__ == "Linear":
                         lora_name = prefix + '.' + name + '.' + child_name
