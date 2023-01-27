@@ -45,8 +45,6 @@ parser.add_argument('--mask', action='store_true', help='顔部分以外をマ�
 parser.add_argument('--prompt', type=str,default = None, help='検証画像のプロンプト')
 parser.add_argument('--minibatch_repeat', type=int,default = 1, 
                     help='ミニバッチを拡大することによって、小さいデータセットで大きいバッチサイズを実現します。epoch、batch_size,save_n_epochsを割り切れる数を推奨する')
-
-args = parser.parse_args()
 ############################################################################################
 
 
@@ -318,4 +316,5 @@ def main(args):
         
         
 if __name__ == "__main__":
+    args = parser.parse_args()
     main(args)
