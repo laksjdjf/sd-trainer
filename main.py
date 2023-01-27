@@ -120,7 +120,7 @@ def main(args):
     if args.lora:
         unet.requires_grad_(False)
         text_encoder.requires_grad_(False)
-        network = LoRANetwork(text_encoder if args.train_encoder else None, unet if not args.up_only else unet.up_blocks, args.lora) #up onlyのloraはkohyaさんのに互換性なし
+        network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora, "up_blocks" if args.up_only else "")
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
         
     #最適化関数
