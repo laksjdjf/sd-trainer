@@ -137,7 +137,7 @@ class LoRANetwork(torch.nn.Module):
         means = {k:v.float().abs().mean() for k,v in state_dict.items()} 
         
         target_keys = ["lora_up","lora_down",
-                       "down_blocks","mid_block","up_blocks",
+                       #up onlyに対応できない"down_blocks","mid_block","up_blocks",
                        "to_q","to_k","to_v","to_out",
                        "ff_net_0","ff_net_2",
                        "attn1","attn2"
