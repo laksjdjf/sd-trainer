@@ -45,6 +45,7 @@ parser.add_argument('--mask', action='store_true', help='顔部分以外をマ�
 parser.add_argument('--prompt', type=str,default = None, help='検証画像のプロンプト')
 parser.add_argument('--minibatch_repeat', type=int,default = 1, 
                     help='ミニバッチを拡大することによって、小さいデータセットで大きいバッチサイズを実現します。epoch、batch_size,save_n_epochsを割り切れる数を推奨する')
+parser.add_argument('--resume_lora', type=str,default = None, help='loraのresume')
 ############################################################################################
 
 
@@ -119,6 +120,8 @@ def main(args):
         unet.requires_grad_(False)
         text_encoder.requires_grad_(False)
         network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora, "up_blocks" if args.up_only else "")
+        if args.resume_lora is not None:
+            network.load_state_dict(torch.load(args.resume_lora))
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
         
     #最適化関数
