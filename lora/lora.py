@@ -49,11 +49,12 @@ class LoRAModule(torch.nn.Module):
     
 #LoRANetwork
 class LoRANetwork(torch.nn.Module):
-    def __init__(self, text_encoder, unet, lora_dim=4, multiplier=1.0, alpha=1) -> None:
+    def __init__(self, text_encoder, unet, lora_dim=4, target_block = "" ,multiplier=1.0, alpha=1) -> None:
         super().__init__()
         self.multiplier = multiplier
         self.lora_dim = lora_dim
         self.alpha = alpha
+        self.target_block = target_block
         
         #text encoderのloraを作る
         if text_encoder is not None:
@@ -84,7 +85,7 @@ class LoRANetwork(torch.nn.Module):
     def create_modules(self,prefix, root_module: torch.nn.Module, target_replace_modules) -> list:
         loras = []
         for name, module in root_module.named_modules():
-            if module.__class__.__name__ in target_replace_modules:
+            if module.__class__.__name__ in target_replace_modules and self.target_block in name:
                 for child_name, child_module in module.named_modules():
                     if child_module.__class__.__name__ == "Linear":
                         lora_name = prefix + '.' + name + '.' + child_name
@@ -129,3 +130,21 @@ class LoRANetwork(torch.nn.Module):
             save_file(state_dict, file)
         else:
             torch.save(state_dict, file)
+            
+    def weight_log(self):
+        state_dict = self.state_dict()
+        
+        means = {k:v.float().abs().mean() for k,v in state_dict.items()} 
+        
+        target_keys = ["lora_up","lora_down",
+                       #up onlyに対応できない"down_blocks","mid_block","up_blocks",
+                       "to_q","to_k","to_v","to_out",
+                       "ff_net_0","ff_net_2",
+                       "attn1","attn2"
+                      ]
+        
+        logs = {}
+        
+        for target_key in target_keys:
+            logs[target_key] = torch.stack([means[key] for key in means.keys() if target_key in key]).mean().item()
+        return logs

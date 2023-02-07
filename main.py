@@ -7,6 +7,8 @@ import numpy as np
 import time
 
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, StableDiffusionPipeline ,DDIMScheduler
+from diffusers.optimization import get_scheduler
+
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils.dataset import SimpleDataset,AspectDataset
@@ -27,6 +29,7 @@ parser.add_argument('--image_log', type=str, required=True, help='検証画像�
 parser.add_argument('--resolution', type=str, default="512,512", help='画像サイズ。"幅,高さ"で選択、もしくは"長さ"で正方形になる')
 parser.add_argument('--batch_size', type=int, default=4, help='バッチサイズ')
 parser.add_argument('--lr', type=str, default="5e-6", help='学習率、"5e-6,1e-4"でtext encoderが5e-6、unetが1e-4になる。"5e-6"とすると両方5e-6')
+parser.add_argument('--lr_scheduler', type=str,default = "constant", help='学習率スケジューラー',choices=["cosine", "linear", "constant"])
 parser.add_argument('--train_encoder', action='store_true', help='テキストエンコーダを学習する')
 parser.add_argument('--epochs', type=int, default=10, help='エポック数')
 parser.add_argument('--save_n_epochs', type=int, default=5, help='何エポックごとにセーブするか')
@@ -39,15 +42,22 @@ parser.add_argument('--up_only', action='store_true', help='up blocksのみの�
 parser.add_argument('--v_prediction', action='store_true', help='SDv2系（-baseではない）を使う場合に指定する')
 parser.add_argument('--step_range', type=str, default="0,1", help='学習対象のsampling step範囲を割合で指定する。')
 parser.add_argument('--mask', action='store_true', help='顔部分以外をマスクする')
-args = parser.parse_args()
+parser.add_argument('--prompt', type=str,default = None, help='検証画像のプロンプト')
+parser.add_argument('--minibatch_repeat', type=int,default = 1, 
+                    help='ミニバッチを拡大することによって、小さいデータセットで大きいバッチサイズを実現します。epoch、batch_size,save_n_epochsを割り切れる数を推奨する')
+parser.add_argument('--resume_lora', type=str,default = None, help='loraのresume')
 ############################################################################################
 
 
 #メイン処理
-def main():
+def main(args):
     ###学習準備##############################################################################
+    
+    #エポック数計算、ミニバッチサイズ数を計算
+    minibatch_size = args.batch_size // args.minibatch_repeat
+    
     #output pathをつくる。
-    if not os.path.exists(args.output):
+    if not os.path.exists(args.output) and not args.lora:
         os.makedirs(args.output)
         
     #image log pathを作る。
@@ -80,6 +90,7 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(args.model, subfolder='unet')
     try:
         unet.set_use_memory_efficient_attention_xformers(True)
+        print("apply xformers for unet !!!")
     except:
         print("cant apply xformers. using normal unet !!!")
         
@@ -108,7 +119,9 @@ def main():
     if args.lora:
         unet.requires_grad_(False)
         text_encoder.requires_grad_(False)
-        network = LoRANetwork(text_encoder if args.train_encoder else None, unet if not args.up_only else unet.up_blocks, args.lora)
+        network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora, "up_blocks" if args.up_only else "")
+        if args.resume_lora is not None:
+            network.load_state_dict(torch.load(args.resume_lora))
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
         
     #最適化関数
@@ -150,13 +163,23 @@ def main():
     #sampling stepの範囲を指定
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in args.step_range.split(",")]
     
-    #データローダー
+    #データローダー num_workersは適当。
     if args.use_bucket:
-        dataset = AspectDataset(args.dataset,tokenizer = tokenizer,batch_size = args.batch_size,mask = args.mask) #batch sizeはデータセット側で処理する
+        dataset = AspectDataset(args.dataset,tokenizer = tokenizer,batch_size = minibatch_size,mask = args.mask) #batch sizeはデータセット側で処理する
         dataloader = DataLoader(dataset,batch_size=1,num_workers=2,shuffle=False,collate_fn = lambda x:x[0]) #shuffleはdataset側で処理する、Falseが必須。
     else:
         dataset = SimpleDataset(args.dataset,size)
-        dataloader = DataLoader(dataset,batch_size=args.batch_size,num_workers=2,shuffle=True)
+        dataloader = DataLoader(dataset,batch_size=minibatch_size,num_workers=2,shuffle=True)
+    
+    #Tトータルステップ
+    total_steps = (args.epochs // args.minibatch_repeat) * len(dataloader)
+    
+    lr_scheduler = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps= int(0.05 * total_steps), #そこまで重要に思えないから0.05固定
+        num_training_steps= total_steps
+    )
 
     #wandb
     if args.wandb:
@@ -167,13 +190,12 @@ def main():
     global_step = 0
     
     #プログレスバー
-    progress_bar = tqdm(range((args.epochs) * len(dataloader)), desc="Total Steps", leave=False)
+    progress_bar = tqdm(range(total_steps), desc="Total Steps", leave=False)
     loss_ema = None #訓練ロスの指数平均
     
     #学習ループ
-    for epoch in range(args.epochs):
+    for epoch in range(0,args.epochs,args.minibatch_repeat): #ミニバッチリピートがnだと1回のループでnエポック進む扱い。
         for batch in dataloader:
-                        
             #時間計測
             b_start = time.perf_counter()
             
@@ -186,6 +208,10 @@ def main():
                 latents = batch['latents'].to(device) * 0.18215 #bucketを使う場合はあらかじめlatentを計算している
             else:
                 latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * 0.18215 #正規化
+                
+            #ミニバッチの拡大
+            latents = torch.cat([latents]*args.minibatch_repeat)
+            encoder_hidden_states = torch.cat([encoder_hidden_states]*args.minibatch_repeat)
                 
             #ノイズを生成
             noise = torch.randn_like(latents)
@@ -208,6 +234,9 @@ def main():
             #顔部分以外をマスクして学ばせない。顔以外をマスクって・・・
             if args.mask:
                 mask = batch["mask"].to(device)
+                #ミニバッチの拡大
+                mask = torch.cat([mask]*args.minibatch_repeat)
+                
                 noise = noise * mask
                 noise_pred = noise_pred * mask
                 
@@ -223,6 +252,8 @@ def main():
             #勾配降下
             scaler.step(optimizer)
             scaler.update()
+        
+            lr_scheduler.step()
             
             #勾配リセット
             optimizer.zero_grad()
@@ -236,7 +267,7 @@ def main():
             samples_per_time = bsz / time_per_steps
             
             #プログレスバー更新
-            logs={"loss":loss_ema,"sample_per_second":samples_per_time}
+            logs={"loss":loss_ema,"samples_per_second":samples_per_time,"lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.update(1)
             progress_bar.set_postfix(logs)
             
@@ -245,10 +276,10 @@ def main():
                 run.log(logs, step=global_step)
         
         #モデルのセーブと検証画像生成
-        print(f'{epoch} epoch 目が終わりました。訓練lossは{loss_ema}です。')
+        print(f'{epoch+args.minibatch_repeat} epoch 目が終わりました。訓練lossは{loss_ema}です。')
         if args.lora and args.wandb:
             run.log(network.weight_log(), step=global_step)
-        if epoch % args.save_n_epochs == args.save_n_epochs - 1:
+        if (epoch + args.minibatch_repeat) % args.save_n_epochs == 0:
             print(f'チェックポイントをセーブするよ!')
             pipeline = StableDiffusionPipeline.from_pretrained(
                     args.model,
@@ -263,11 +294,12 @@ def main():
             
             #検証画像生成
             with torch.autocast('cuda', enabled=args.amp):
-                num = min(bsz,NUMBER_OF_IMAGE_LOGS) #基本4枚だがバッチサイズ次第
+                num = min(bsz // args.minibatch_repeat,NUMBER_OF_IMAGE_LOGS) #基本4枚だがバッチサイズ次第
                 images = []
+                generator = torch.Generator("cuda").manual_seed(4545)
                 for i in range(num):
-                    prompt = batch["caption"][i]    
-                    image = pipeline(prompt,width=size[0],height=size[1],negative_prompt=NEGATIVE_PROMPT).images[0]
+                    prompt = batch["caption"][i] if args.prompt is None else args.prompt    
+                    image = pipeline(prompt,width=size[0],height=size[1],negative_prompt=NEGATIVE_PROMPT,generator=generator).images[0]
                     if args.wandb:    
                         images.append(wandb.Image(image,caption=prompt))
                     else:
@@ -287,4 +319,5 @@ def main():
         
         
 if __name__ == "__main__":
-    main()
+    args = parser.parse_args()
+    main(args)
