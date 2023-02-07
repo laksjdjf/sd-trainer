@@ -31,7 +31,8 @@ class EHModule(torch.nn.Module):
         self.org_module.forward = self.forward
         del self.org_module
     
-    def merge_to(self, path):
+    def merge_to(self):
+        print(f"merging {self.eh_name}")
         row, column = self.org_module.weight.shape
         new_weight = torch.zeros((row, column))
         
@@ -39,7 +40,7 @@ class EHModule(torch.nn.Module):
         for i in range(self.num_groups):
             new_weight[i * row // self.num_groups:(i+1) * row // self.num_groups,i * column // self.num_groups:(i+1) * column // self.num_groups] = self.linear.weight
             
-        self.org_module.weight += new_weight * self.multiplier
+        self.org_module.weight = torch.nn.Parameter(self.org_module.weight + new_weight * self.multiplier)
 
     def forward(self, x):
         #(B:バッチサイズ,Np:トークン数,D:埋め込み次元/チャンネル)
@@ -58,7 +59,7 @@ class EHModule(torch.nn.Module):
         return y + z * self.multiplier
     
 class EHNetwork(torch.nn.Module):
-    def __init__(self, unet:UNet2DConditionModel, num_groups:int = 4, multiplier:float = 1.0, merge:bool = False) -> None:
+    def __init__(self, unet:UNet2DConditionModel, num_groups:int = 4, multiplier:float = 1.0, merge:bool = False, resume:str = None) -> None:
         super().__init__()
         self.num_groups = num_groups
         self.multiplier = multiplier
@@ -68,9 +69,14 @@ class EHNetwork(torch.nn.Module):
         self.unet_ehs = self.create_modules(EH_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE)
         print(f"create EH for U-Net: {len(self.unet_ehs)} modules.")
         
+        if resume is not None:
+            state_dict = torch.load(resume)
+        
         # ehを適用する
         for eh in self.unet_ehs:
             self.add_module(eh.eh_name, eh)
+            if resume is not None:
+                eh.linear.weight = torch.nn.Parameter(state_dict[eh.eh_name + ".linear.weight"])
             if merge:
                 eh.merge_to() #重みのマージ
             else:

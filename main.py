@@ -13,6 +13,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils.dataset import SimpleDataset,AspectDataset
 from lora.lora import LoRANetwork
+from networks.eh import EHNetwork
 
 
 #検証画像用のネガティブプロンプト
@@ -36,6 +37,7 @@ parser.add_argument('--save_n_epochs', type=int, default=5, help='何エポッ�
 parser.add_argument('--amp', action='store_true', help='AMPを利用する')
 parser.add_argument('--gradient_checkpointing', action='store_true', help='勾配チェックポイントを利用する（VRAM減計算時間増）')
 parser.add_argument('--lora', type=int, default=0, help='loraのランク、0だとloraを適用しない')
+parser.add_argument('--eh', type=int, default=0, help='ehのグループ数、0だとehを適用しない')
 parser.add_argument('--use_bucket', action='store_true', help='あらかじめbucketとlatentにする処理が必要')
 parser.add_argument('--wandb', action='store_true', help='wandbによるログ管理')
 parser.add_argument('--up_only', action='store_true', help='up blocksのみの学習')
@@ -57,7 +59,7 @@ def main(args):
     minibatch_size = args.batch_size // args.minibatch_repeat
     
     #output pathをつくる。
-    if not os.path.exists(args.output) and not args.lora:
+    if not os.path.exists(args.output) and not (args.lora or args.eh):
         os.makedirs(args.output)
         
     #image log pathを作る。
@@ -124,6 +126,14 @@ def main(args):
             network.load_state_dict(torch.load(args.resume_lora))
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
         
+    #EHの準備
+    if args.eh:
+        unet.requires_grad_(False)
+        network = EHNetwork(unet, args.eh)
+        if args.resume_lora is not None:
+            network.load_state_dict(torch.load(args.resume_lora)) #分かりづらいけど同じでいいか
+        params = network.prepare_optimizer_params(unet_lr) #条件分岐めんどいので上書き
+        
     #最適化関数
     try:
         import bitsandbytes as bnb
@@ -151,7 +161,7 @@ def main(args):
     text_encoder.to(device,dtype=torch.float32 if args.train_encoder else weight_dtype)
     vae.to(device,dtype=weight_dtype)
     unet.to(device,dtype=torch.float32) #学習対称はfloat32
-    if args.lora:
+    if args.lora or args.eh:
         network.to(device,dtype=torch.float32)
     
     #ノイズスケジューラー
@@ -239,9 +249,7 @@ def main(args):
                 
                 noise = noise * mask
                 noise_pred = noise_pred * mask
-                
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
-            
             if loss_ema is None:
                 loss_ema = loss.item()
             else:
@@ -310,7 +318,7 @@ def main(args):
             else:
                 [image.save(os.path.join(args.image_log,f'image_log_epoch_{str(epoch).zfill(3)}_{i}.png')) for i,image in enumerate(images)]
             
-            if args.lora:
+            if args.lora or args.eh:
                 network.save_weights(f'{args.output}.pt')
             else:
                 pipeline.save_pretrained(f'{args.output}')
