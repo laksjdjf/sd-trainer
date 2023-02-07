@@ -252,7 +252,7 @@ class EHNetworkCompvis(torch.nn.Module):
             assert eh.eh_name not in names, f"duplicated eh name: {eh.eh_name}"
             names.add(eh.eh_name)
 
-    def restore(self, unet):
+    def restore(self, text_encoder, unet):
         # restore forward/weights from property for all modules
         restored = False              # messaging purpose only
         modules = []
