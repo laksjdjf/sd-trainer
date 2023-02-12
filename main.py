@@ -50,6 +50,8 @@ parser.add_argument('--minibatch_repeat', type=int,default = 1,
 parser.add_argument('--resume_lora', type=str,default = None, help='loraのresume')
 ############################################################################################
 
+def collate_fn(examples):
+  return examples[0]
 
 #メイン処理
 def main(args):
@@ -176,7 +178,7 @@ def main(args):
     #データローダー num_workersは適当。
     if args.use_bucket:
         dataset = AspectDataset(args.dataset,tokenizer = tokenizer,batch_size = minibatch_size,mask = args.mask) #batch sizeはデータセット側で処理する
-        dataloader = DataLoader(dataset,batch_size=1,num_workers=2,shuffle=False,collate_fn = lambda x:x[0]) #shuffleはdataset側で処理する、Falseが必須。
+        dataloader = DataLoader(dataset,batch_size=1,num_workers=2,shuffle=False,collate_fn = collate_fn) #shuffleはdataset側で処理する、Falseが必須。
     else:
         dataset = SimpleDataset(args.dataset,size)
         dataloader = DataLoader(dataset,batch_size=minibatch_size,num_workers=2,shuffle=True)
