@@ -5,6 +5,7 @@ import os
 from tqdm import tqdm
 import numpy as np
 import time
+import copy
 
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, StableDiffusionPipeline ,DDIMScheduler
 from diffusers.optimization import get_scheduler
@@ -13,6 +14,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils.dataset import SimpleDataset,AspectDataset
 from lora.lora import LoRANetwork
+from lora.pfg_imp import PFGNetwork
 from networks.eh import EHNetwork
 
 
@@ -44,6 +46,7 @@ parser.add_argument('--up_only', action='store_true', help='up blocksのみの�
 parser.add_argument('--v_prediction', action='store_true', help='SDv2系（-baseではない）を使う場合に指定する')
 parser.add_argument('--step_range', type=str, default="0,1", help='学習対象のsampling step範囲を割合で指定する。')
 parser.add_argument('--mask', action='store_true', help='顔部分以外をマスクする')
+parser.add_argument('--pfg', type=int, default=0, help='pfg')
 parser.add_argument('--prompt', type=str,default = None, help='検証画像のプロンプト')
 parser.add_argument('--minibatch_repeat', type=int,default = 1, 
                     help='ミニバッチを拡大することによって、小さいデータセットで大きいバッチサイズを実現します。epoch、batch_size,save_n_epochsを割り切れる数を推奨する')
@@ -120,18 +123,25 @@ def main(args):
         params.append({'params':text_encoder.parameters(),'lr':text_lr})
 
     #LoRAの準備
-    if args.lora:
+    if args.lora or args.pfg:
         unet.requires_grad_(False)
         text_encoder.requires_grad_(False)
-        network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora, "up_blocks" if args.up_only else "")
+        if args.pfg == 0:
+            network = LoRANetwork(text_encoder if args.train_encoder else None, unet, args.lora, "up_blocks" if args.up_only else "")
+        else:
+            unet.requires_grad_(True)
+            network = PFGNetwork(unet, args.pfg, 1024, 5) #とりあえずv2固定
         if args.resume_lora is not None:
             network.load_state_dict(torch.load(args.resume_lora))
         params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
         
+        if args.pfg:
+            params.append({"params":unet.parameters(),"lr":unet_lr})
+        
     #EHの準備
     if args.eh:
         unet.requires_grad_(False)
-        network = EHNetwork(unet, args.eh)
+        network = EHNetwork(unet, args.eh, target_block =  "up_blocks" if args.up_only else "")
         if args.resume_lora is not None:
             network.load_state_dict(torch.load(args.resume_lora)) #分かりづらいけど同じでいいか
         params = network.prepare_optimizer_params(unet_lr) #条件分岐めんどいので上書き
@@ -163,7 +173,7 @@ def main(args):
     text_encoder.to(device,dtype=torch.float32 if args.train_encoder else weight_dtype)
     vae.to(device,dtype=weight_dtype)
     unet.to(device,dtype=torch.float32) #学習対称はfloat32
-    if args.lora or args.eh:
+    if args.lora or args.eh or args.pfg:
         network.to(device,dtype=torch.float32)
     
     #ノイズスケジューラー
@@ -177,7 +187,7 @@ def main(args):
     
     #データローダー num_workersは適当。
     if args.use_bucket:
-        dataset = AspectDataset(args.dataset,tokenizer = tokenizer,batch_size = minibatch_size,mask = args.mask) #batch sizeはデータセット側で処理する
+        dataset = AspectDataset(args.dataset,tokenizer = tokenizer,batch_size = minibatch_size,mask = args.mask,controll = args.pfg > 0) #batch sizeはデータセット側で処理する
         dataloader = DataLoader(dataset,batch_size=1,num_workers=2,shuffle=False,collate_fn = collate_fn) #shuffleはdataset側で処理する、Falseが必須。
     else:
         dataset = SimpleDataset(args.dataset,size)
@@ -208,6 +218,7 @@ def main(args):
     #学習ループ
     for epoch in range(0,args.epochs,args.minibatch_repeat): #ミニバッチリピートがnだと1回のループでnエポック進む扱い。
         for batch in dataloader:
+
             #時間計測
             b_start = time.perf_counter()
             
@@ -224,11 +235,15 @@ def main(args):
             #ミニバッチの拡大
             latents = torch.cat([latents]*args.minibatch_repeat)
             encoder_hidden_states = torch.cat([encoder_hidden_states]*args.minibatch_repeat)
+            
+            if args.pfg > 0:
+                controlls = batch["controll"].to(device)
+                torch.cat([controlls]*args.minibatch_repeat)
+                network.set_input(controlls)
                 
             #ノイズを生成
             noise = torch.randn_like(latents)
             bsz = latents.shape[0]
-            
             #画像ごとにstep数を決める
             timesteps = torch.randint(step_range[0], step_range[1], (bsz,), device=latents.device)
             timesteps = timesteps.long()
@@ -251,6 +266,7 @@ def main(args):
                 
                 noise = noise * mask
                 noise_pred = noise_pred * mask
+                    
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
             if loss_ema is None:
                 loss_ema = loss.item()
@@ -287,7 +303,7 @@ def main(args):
         
         #モデルのセーブと検証画像生成
         print(f'{epoch+args.minibatch_repeat} epoch 目が終わりました。訓練lossは{loss_ema}です。')
-        if args.lora and args.wandb:
+        if args.lora and args.wandb and not args.pfg:
             run.log(network.weight_log(), step=global_step)
         if (epoch + args.minibatch_repeat) % args.save_n_epochs == 0:
             print(f'チェックポイントをセーブするよ!')
@@ -308,7 +324,10 @@ def main(args):
                 images = []
                 generator = torch.Generator("cuda").manual_seed(4545)
                 for i in range(num):
-                    prompt = batch["caption"][i] if args.prompt is None else args.prompt    
+                    prompt = batch["caption"][i] if args.prompt is None else args.prompt
+                    if args.pfg > 0:
+                        controlls = batch["controll"][i].unsqueeze(0).to(device)
+                        network.set_input(controlls)
                     image = pipeline(prompt,width=size[0],height=size[1],negative_prompt=NEGATIVE_PROMPT,generator=generator).images[0]
                     if args.wandb:    
                         images.append(wandb.Image(image,caption=prompt))
@@ -323,6 +342,8 @@ def main(args):
             if args.lora or args.eh:
                 network.save_weights(f'{args.output}.pt')
             else:
+                if args.pfg:
+                    network.save_weights(f'{args.output}.pt')
                 pipeline.save_pretrained(f'{args.output}')
                 
             del pipeline
