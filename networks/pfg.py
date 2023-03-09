@@ -12,7 +12,7 @@ PREFIX_UNET = 'pfg'
     
 #Network
 class PFGNetwork(torch.nn.Module):
-    def __init__(self, unet, input_size:int = 768, cross_attention_dim:int = 1024, num_tokens:int = 1) -> None:
+    def __init__(self, text_encoder, unet, up_only , train_encoder, input_size:int = 768, cross_attention_dim:int = 1024, num_tokens:int = 1) -> None:
         super().__init__()
         self.input_size = input_size
         self.cross_attention_dim = cross_attention_dim
@@ -22,8 +22,7 @@ class PFGNetwork(torch.nn.Module):
         self.input = None
         
         #input_dim -> token_dim * num_tokens
-        self.pfg_linear_1 = torch.nn.Linear(self.input_size, self.input_size * 2)
-        self.pfg_linear_2 = torch.nn.Linear(self.input_size * 2, cross_attention_dim * num_tokens)
+        self.pfg_linear = torch.nn.Linear(self.input_size, cross_attention_dim * num_tokens)
         #unetのforward書き換え
         self._hook_forwards(unet, UNET_TARGET_REPLACE_MODULE)
         self.requires_grad_(True)
@@ -47,15 +46,15 @@ class PFGNetwork(torch.nn.Module):
         prev_forward = org_module.forward
         def forward(x):
             #(b,1,dim) -> #(b,1,in_dim * tokens) 
-            c = self.pfg_linear_1(self.input)
-            c = self.pfg_linear_2(torch.relu(c))
+            c = self.pfg_linear(self.input)
             
             #(b,1,dim) -> #(b,tokens,in_dim) 
             c = c.reshape(-1,self.num_tokens,self.cross_attention_dim)
             
-            #生成時は違う場合が多い、その場合は(uncond+cond)*batchのため2分の1倍する。
-            if x.shape[0] != c.shape[0]:
+            #1プロンプトで複数バッチ生成するときはcを拡張。
+            if x.shape[0] != c.shape[0] and c.shape[0] == 1:
                 c = c.repeat(x.shape[0] // 2,1,1)
+                
             #concatenate (b,N,in_dim) + (b,tokens,in_dim)
             if self.input.shape[0] == x.shape[0]:
                 x = torch.cat([x,c],dim = 1)
@@ -91,24 +90,6 @@ class PFGNetwork(torch.nn.Module):
             save_file(state_dict, file)
         else:
             torch.save(state_dict, file)
-            
-    def weight_log(self):
-        state_dict = self.state_dict()
-        
-        means = {k:v.float().abs().mean() for k,v in state_dict.items()} 
-        
-        target_keys = ["lora_up","lora_down",
-                       "down_blocks","mid_block","up_blocks",
-                       "to_q","to_k","to_v","to_out",
-                       "ff_net_0","ff_net_2",
-                       "attn1","attn2"
-                      ]
-        
-        logs = {}
-        
-        for target_key in target_keys:
-            logs[target_key] = torch.stack([means[key] for key in means.keys() if target_key in key]).mean().item()
-        return logs
     
     def set_input(self,input_tensor:torch.Tensor) -> None:
         self.input = input_tensor
