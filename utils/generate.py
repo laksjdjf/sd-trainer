@@ -17,7 +17,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         '''
         with torch.no_grad():
             tokens = self.tokenizer(prompts, max_length=self.tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids.to(self.device)
-            embs = self.text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(self.device, dtype = self.dtype)
+            embs = self.text_encoder(tokens, output_hidden_states=True).last_hidden_state
         return embs
 
     def decode_latents(self, latents):
@@ -70,7 +70,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
             #cat (b,n1,d) + (1*b,n2,d)
             cond = torch.cat([cond, pfg_feature.repeat(cond.shape[0],1,1)], dim=1)
             #copy EOS
-            uncond = torch.cat([cond, cond[:,-1:,:].repeat(1,pfg_feature.shape[1],1)], dim=1)
+            uncond = torch.cat([uncond, uncond[:,-1:,:].repeat(1,pfg_feature.shape[1],1)], dim=1)
             
             text_embs = torch.cat([cond, uncond], dim=0)
         
@@ -79,10 +79,12 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         timesteps = self.scheduler.timesteps
 
         #初期ノイズ
-        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device = self.device, dtype = self.dtype)
+        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device = self.device)
         latents = latents * self.scheduler.init_noise_sigma
-
-        for i,t in tqdm(enumerate(timesteps)):
+        
+        
+        progress_bar = tqdm(range(num_inference_steps), desc="Total Steps", leave=False)
+        for i,t in enumerate(timesteps):
             #入力を作成
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
@@ -97,6 +99,8 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
 
             #推定ノイズからノイズを取り除いたlatentsを求める
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            
+            progress_bar.update(1)
         
         images = self.decode_latents(latents)
         

@@ -1,0 +1,63 @@
+model: 
+    input_path: "model"
+    output_path: "test" #networkの場合"<output_path>.pt"のようになる。
+    v2: true
+    v_prediction: true
+    
+dataset:
+    module: utils.dataset
+    attribute: AspectDataset
+    args:
+        path: "dataset"
+        mask: false
+        control: false
+    loader:
+        module: torch.utils.data
+        attribute: DataLoader
+        collate_fn: "identity"
+        args:
+            num_workers: 2
+save:
+    module: utils.save
+    attribute: Save
+    args:
+        wandb_name: "sd-trainer"
+        over_write: true
+        save_n_epochs: 1
+        save_n_steps: null
+        image_logs: null
+        num_images: 4
+        resolution: "640,896"
+        prompt: null
+        negative_prompt: "worst quality, low quality, medium quality, deleted, lowres, comic, bad anatomy,bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, jpeg artifacts, signature, watermark, username, blurry"
+        seed: 4545
+train:
+    train_unet: false
+    train_encoder: false
+    lr: "3e-4"
+    lr_scheduler: "constant"
+    epochs: 10
+    batch_size: 8
+    amp: true
+    gradient_checkpointing: false
+    use_xformers: true
+    
+feature:
+    minibatch_repeat: 1
+    up_only: false
+    step_range: "0.0,1.0"
+    
+network:
+    module: networks.lora
+    attribute: LoRANetwork
+    resume: null
+    args:
+        rank: 16
+        
+pfg: null
+        
+optimizer:
+    module: torch.optim
+    attribute: AdamW
+    args:
+        weight_decay: 0.01

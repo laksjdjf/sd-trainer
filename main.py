@@ -47,7 +47,8 @@ def main(args):
     
     #AMP用のスケーラー
     scaler = torch.cuda.amp.GradScaler(enabled=config.train.amp)
-
+    
+    #optimizerに入れるパラメータ
     params = []
     #networkの準備、パラメータの確定
     if config.network is not None:
@@ -56,14 +57,20 @@ def main(args):
         if config.network.resume is not None:
             network.load_state_dict(torch.load(config.network.resume))
         params.extend(network.prepare_optimizer_params(text_lr,unet_lr))
+    else:
+        network = None
     
     #pfgの準備
     if config.pfg is not None:
         from pfg.pfg import PFGNetwork
-        pfg = PFGNetwork(config.pfg.args)
-        pfg.load_state_dict(torch.load(pfg.args))
+        pfg = PFGNetwork(**config.pfg.args)
+        if config.pfg.resume is not None:
+            pfg.load_state_dict(torch.load(config.pfg.resume))
         params.append({'params':pfg.parameters(), 'lr':unet_lr})
-        
+    else:
+        pfg = None
+    
+    #unetのパラメータを追加
     if config.train.train_unet:
         if config.feature.up_only:
             params.append({'params':unet.up_blocks.parameters(), 'lr':unet_lr})
@@ -113,7 +120,7 @@ def main(args):
     #型の指定とGPUへの移動
     text_encoder.to(device,dtype=torch.float32 if config.train.train_encoder else weight_dtype)
     vae.to(device,dtype=weight_dtype)
-    unet.to(device,dtype=torch.float32 if config.train_unet else weight_dtype)
+    unet.to(device,dtype=torch.float32 if config.train.train_unet else weight_dtype)
     if config.network is not None:
         network.to(device,dtype=torch.float32)
     if config.pfg is not None:
@@ -148,7 +155,7 @@ def main(args):
     
     #save
     save_module = getattr(importlib.import_module(config.save.module), config.save.attribute)
-    save = save_module(config.model.output_path, len(dataloader) // config.feature.minibatch_repeat, **config.save.args)
+    save = save_module(config.model.output_path, config.train.train_unet, len(dataloader) // config.feature.minibatch_repeat, **config.save.args)
     
     #全ステップ
     global_steps = 0
@@ -244,10 +251,9 @@ def main(args):
             progress_bar.set_postfix(logs)
             
             #logやsave
-            if total_steps != global_steps:
-                save(config.model.input_path, global_steps, logs, batch, text_encoder, unet, vae, tokenizer, network)
-                
-    save(config.model.input_path, global_steps, logs, batch, text_encoder, unet, vae, tokenizer, network)
+            final = total_steps == global_steps
+            save(config.model.input_path, global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, network, pfg)
+    
         
 if __name__ == "__main__":
     args = parser.parse_args()
