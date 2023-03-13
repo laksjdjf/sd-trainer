@@ -7,7 +7,7 @@ import time
 from omegaconf import OmegaConf
 import importlib
 
-from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, StableDiffusionPipeline ,DDIMScheduler
+from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from transformers import CLIPTextModel, CLIPTokenizer
@@ -38,6 +38,7 @@ def main(args):
     tokenizer = CLIPTokenizer.from_pretrained(config.model.input_path, subfolder='tokenizer')
     text_encoder = CLIPTextModel.from_pretrained(config.model.input_path, subfolder='text_encoder')
     vae = AutoencoderKL.from_pretrained(config.model.input_path, subfolder='vae')
+    vae.enable_slicing()
     unet = UNet2DConditionModel.from_pretrained(config.model.input_path, subfolder='unet')
     
     if config.train.use_xformers:
@@ -47,19 +48,30 @@ def main(args):
     #AMP用のスケーラー
     scaler = torch.cuda.amp.GradScaler(enabled=config.train.amp)
 
+    params = []
     #networkの準備、パラメータの確定
     if config.network is not None:
         network_class = getattr(importlib.import_module(config.network.module), config.network.attribute)
         network = network_class(text_encoder, unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
         if config.network.resume is not None:
             network.load_state_dict(torch.load(config.network.resume))
-        params = network.prepare_optimizer_params(text_lr,unet_lr) #条件分岐めんどいので上書き
-    else:
-        network = None
-        params = [{'params':unet.parameters(), 'lr':unet_lr}]
-        if config.train.train_encoder:
-            params.append({'params':text_encoder.parameters(), 'lr':text_lr})
+        params.extend(network.prepare_optimizer_params(text_lr,unet_lr))
+    
+    #pfgの準備
+    if config.pfg is not None:
+        from pfg.pfg import PFGNetwork
+        pfg = PFGNetwork(config.pfg.args)
+        pfg.load_state_dict(torch.load(pfg.args))
+        params.append({'params':pfg.parameters(), 'lr':unet_lr})
         
+    if config.train.train_unet:
+        if config.feature.up_only:
+            params.append({'params':unet.up_blocks.parameters(), 'lr':unet_lr})
+        else:
+            params.append({'params':unet.parameters(), 'lr':unet_lr})
+            if config.train.train_encoder:
+                params.append({'params':text_encoder.parameters(), 'lr':text_lr})
+    
     #最適化関数
     try:
         optimizer_class = getattr(importlib.import_module(config.optimizer.module), config.optimizer.attribute)
@@ -74,25 +86,16 @@ def main(args):
     #勾配、trainとevalの確定
     vae.requires_grad_(False)
     vae.eval()
-    if config.network is not None:
+    unet.requires_grad_(config.train.train_unet)
+    unet.train(config.train.train_unet)
+    text_encoder.requires_grad_(config.train.train_encoder)
+    text_encoder.train(config.train.train_encoder)
+    
+    if config.feature.up_only and config.network is None:
         unet.requires_grad_(False)
         unet.eval()
-        text_encoder.requires_grad_(False)
-        text_encoder.eval()
-    elif config.feature.up_only:
-        unet.requires_grad_(False)
-        unet.eval()
-        text_encoder.requires_grad_(False)
-        text_encoder.eval()
         unet.up_blocks.requires_grad_(True)
         unet.up_blocks.train()
-        unet.conv_out.requires_grad_(True)
-        unet.conv_out.train()
-    else:
-        text_encoder.requires_grad_(config.train.train_encoder)
-        text_encoder.train(config.train.train_encoder)
-        unet.train()
-        unet.requires_grad_(True)
     
     #勾配チェックポイントによるVRAM削減（計算時間増）
     if config.train.gradient_checkpointing:
@@ -102,7 +105,7 @@ def main(args):
             text_encoder.gradient_checkpointing_enable()
             print("gradient_checkpointing を適用しました。")
         else:
-            if not config.feature.up_only:
+            if config.feature.up_only:
                 unet.conv_in.requires_grad_(True)
             unet.enable_gradient_checkpointing()
             print("gradient_checkpointing を適用しました。")
@@ -110,9 +113,11 @@ def main(args):
     #型の指定とGPUへの移動
     text_encoder.to(device,dtype=torch.float32 if config.train.train_encoder else weight_dtype)
     vae.to(device,dtype=weight_dtype)
-    unet.to(device,dtype=torch.float32)
+    unet.to(device,dtype=torch.float32 if config.train_unet else weight_dtype)
     if config.network is not None:
         network.to(device,dtype=torch.float32)
+    if config.pfg is not None:
+        pfg.to(device,dtype=torch.float32)
     
     #ノイズスケジューラー
     noise_scheduler = DDPMScheduler.from_pretrained(
@@ -174,8 +179,11 @@ def main(args):
             
             if batch["control"] is not None:
                 controls = batch["control"].to(device)
-                torch.cat([controls]*config.feature.minibatch_repeat)
-                network.set_input(controls)
+                
+                with torch.autocast("cuda",enabled=config.train.amp):
+                    pfg_feature = pfg(controls).to(dtype=encoder_hidden_states.dtype)
+                    
+                encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
                 
             #ノイズを生成
             noise = torch.randn_like(latents)
