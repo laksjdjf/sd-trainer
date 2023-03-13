@@ -1,7 +1,8 @@
 import torch
 import os
-from diffusers import AutoencoderKL, UNet2DConditionModel, StableDiffusionPipeline
+from diffusers import AutoencoderKL, UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer
+from utils.generate import WrapStableDiffusionPipeline
 import wandb
 
 #Saveクラス：
@@ -57,7 +58,7 @@ class Save:
             self.run.log(logs, step=steps)
         if steps % self.save_n_steps == 0:
             print(f'チェックポイントをセーブするよ!')
-            pipeline = StableDiffusionPipeline.from_pretrained(
+            pipeline = WrapStableDiffusionPipeline.from_pretrained(
                     model_id,
                     text_encoder=text_encoder,
                     vae=vae,
@@ -78,12 +79,15 @@ class Save:
             with torch.autocast('cuda'):
                 num = min(len(batch["caption"]), self.num_images) #基本4枚だがバッチサイズ次第
                 images = []
-                generator = torch.Generator("cuda").manual_seed(self.seed)
                 for i in range(num):
                     prompt = batch["caption"][i] if self.prompt is None else self.prompt
-                    if batch["control"] is not None:
-                        network.set_input(batch["control"][i].unsqueeze(0).to("cuda"))
-                    image = pipeline(prompt,width=self.resolution[0],height=self.resolution[1],negative_prompt=self.negative_prompt,generator=generator).images[0]
+                    image = pipeline.generate(prompt,
+                                              negative_prompt=self.negative_prompt,
+                                              width=self.resolution[0],
+                                              height=self.resolution[1],
+                                              pfg_feature=batch["control"][i].unsqueeze(0).to("cuda"),
+                                              seed = self.seed
+                                             )[0]
                     if self.wandb:    
                         images.append(wandb.Image(image,caption=prompt))
                     else:
