@@ -3,6 +3,7 @@
 import torch
 import math
 import os
+from networks.loha import LohaModule
 
 UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel", "ResnetBlock2D", "Downsample2D", "Upsample2D"] #Attentionはいらないのでは？
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
@@ -63,13 +64,18 @@ class LoRAModule(torch.nn.Module):
     
 #LoRANetwork
 class LoRANetwork(torch.nn.Module):
-    def __init__(self, text_encoder, unet, up_only, train_encoder = False, rank=4, conv_rank=None, multiplier=1.0, alpha=1) -> None:
+    def __init__(self, text_encoder, unet, up_only, train_encoder = False, rank=4, conv_rank=None, multiplier=1.0, alpha=1, module=None) -> None:
         super().__init__()
         self.multiplier = multiplier
         self.lora_dim = rank
         self.conv_lora_dim = conv_rank
         self.alpha = alpha
         self.target_block = "up_blocks" if up_only else ""
+        
+        if module == "loha":
+            self.module = LohaModule
+        else:
+            self.module = LoRAModule
         
         #text encoderのloraを作る
         if train_encoder:
@@ -105,12 +111,12 @@ class LoRANetwork(torch.nn.Module):
                     if child_module.__class__.__name__ == "Linear":
                         lora_name = prefix + '.' + name + '.' + child_name
                         lora_name = lora_name.replace('.', '_')
-                        lora = LoRAModule(lora_name, child_module, self.multiplier, self.lora_dim, self.alpha)
+                        lora = self.module(lora_name, child_module, self.multiplier, self.lora_dim, self.alpha)
                         loras.append(lora)
                     elif child_module.__class__.__name__ == "Conv2d" and self.conv_lora_dim is not None:
                         lora_name = prefix + '.' + name + '.' + child_name
                         lora_name = lora_name.replace('.', '_')
-                        lora = LoRAModule(lora_name, child_module, self.multiplier, self.conv_lora_dim, self.alpha)
+                        lora = self.module(lora_name, child_module, self.multiplier, self.conv_lora_dim, self.alpha)
                         loras.append(lora)
                     
         return loras
