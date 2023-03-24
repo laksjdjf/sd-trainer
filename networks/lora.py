@@ -24,13 +24,20 @@ class LoRAModule(torch.nn.Module):
         if org_module.__class__.__name__ == 'Linear':
             in_dim = org_module.in_features
             out_dim = org_module.out_features
+            if lora_dim == "dynamic":
+                lora_dim = min(math.ceil(in_dim ** 0.5), math.ceil(out_dim ** 0.5)) * 2
+                self.lora_dim = lora_dim
             self.lora_down = torch.nn.Linear(in_dim, lora_dim, bias=False)
             self.lora_up = torch.nn.Linear(lora_dim, out_dim, bias=False)
             
         elif org_module.__class__.__name__ == 'Conv2d':
             in_dim = org_module.in_channels
             out_dim = org_module.out_channels
-
+            
+            if lora_dim == "dynamic":
+                lora_dim = min(math.ceil(in_dim ** 0.5), math.ceil(out_dim ** 0.5)) * 2
+                self.lora_dim = lora_dim
+            
             self.lora_dim = min(self.lora_dim, in_dim, out_dim)
             if self.lora_dim != lora_dim:
                 print(f"{lora_name} dim (rank) is changed to: {self.lora_dim}")

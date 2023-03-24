@@ -40,7 +40,7 @@ class SimpleDataset(Dataset):
     
 #めんどくさいのでlatent cacheとメタデータがあることを前提とする
 class AspectDataset(Dataset):
-    def __init__(self, tokenizer: CLIPTokenizer, batch_size, path, mask = False, control = False, prompt = None):
+    def __init__(self, tokenizer: CLIPTokenizer, batch_size, path, mask = False, control = False, prompt = None, prefix = ""):
         #メタデータは"(640,896)":["100","101",..]のようなbucketからファイルのリストを出す辞書
         with open(os.path.join(path,"buckets.json"),"r") as f:
             self.bucket2file = json.load(f)
@@ -57,6 +57,8 @@ class AspectDataset(Dataset):
         
         #全画像共通プロンプト
         self.prompt = prompt
+        
+        self.prefix = prefix
         
     def __len__(self):
         return len(self.batch_samples) #通常の長さと違ってデータセットの数ではなくミニバッチの数である。
@@ -76,7 +78,7 @@ class AspectDataset(Dataset):
         for sample in samples:
             if self.prompt is None:
                 with open(os.path.join(self.path,sample + ".caption" ),"r") as f:
-                    captions.append(f.read())
+                    captions.append(self.prefix + f.read())
             else:    
                 captions = [self.prompt for _ in range(len(samples))]
         
