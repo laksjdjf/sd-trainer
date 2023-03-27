@@ -82,7 +82,7 @@ class Save:
                 pipeline.save_pretrained(filename)
             
             if pfg is not None:
-                pfg.save_weights(filename + '.pt')
+                pfg.save_weights(filename + f'n-{pfg.num_tokens}.pt')
 
             #検証画像生成
             with torch.autocast('cuda'):

@@ -40,7 +40,7 @@ class SimpleDataset(Dataset):
     
 #めんどくさいのでlatent cacheとメタデータがあることを前提とする
 class AspectDataset(Dataset):
-    def __init__(self, tokenizer: CLIPTokenizer, batch_size, path, mask = False, control = False, prompt = None, prefix = ""):
+    def __init__(self, tokenizer: CLIPTokenizer, batch_size, path, mask = False, control = False, prompt = None, prefix = "", shuffle = True):
         #メタデータは"(640,896)":["100","101",..]のようなbucketからファイルのリストを出す辞書
         with open(os.path.join(path,"buckets.json"),"r") as f:
             self.bucket2file = json.load(f)
@@ -60,11 +60,13 @@ class AspectDataset(Dataset):
         
         self.prefix = prefix
         
+        self.shuffle = shuffle
+        
     def __len__(self):
         return len(self.batch_samples) #通常の長さと違ってデータセットの数ではなくミニバッチの数である。
     
     def __getitem__(self, i):
-        if i == 0:
+        if i == 0 and self.shuffle:
             self.init_batch_samples()
             
         samples = self.batch_samples[i]
