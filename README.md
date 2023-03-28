@@ -26,15 +26,7 @@ python3 preprocess/tagger_control.py -d <dataset_directory> -o <dataset_director
 ```
 
 # Config
-configに設定例をあげているのでなんとなく察してください。大項目だけ軽く説明します。
-+ model 学習先モデルおよび出力先、v2やv_predictionを設定します。v2は現状なにもかわりませんが＾＾
-+ dataset 基本的にはargs.pathをデータセットがあるパスに変えればいいだけです。
-+ save モデルのセーブや検証画像の生成に関わる設定項目です。
-+ train 訓練に関わる設定です。
-+ feature 私のオリジナル設定たちです。設定非推奨＾＾
-+ network LoRA等の設定です
-+ pfg PFGの設定です
-+ optimizer 最適化関数の設定です。たとえばtorch.optim⇒bitsandbytes.optim、AdamW⇒AdamW8bitで8bitAdamになります。
+[説明](config/README.md)
 
 # 参考リポジトリ
 訓練ループなどの中核コード：https://github.com/harubaru/waifu-diffusion
