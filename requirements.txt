@@ -4,3 +4,5 @@ accelerate
 wandb
 transformers>=4.25.0
 bitsandbytes
+omegaconf
+safetensors

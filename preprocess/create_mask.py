@@ -1,5 +1,3 @@
-#参考記事：https://qiita.com/mczkzk/items/fda37ac4f9ddab2d7f45
-
 import numpy as np
 import os
 import cv2

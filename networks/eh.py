@@ -11,11 +11,12 @@ EH_PREFIX_UNET = 'EH_unet'
 class EHModule(torch.nn.Module):
 #replaces forward method of the original Linear, instead of replacing the original Linear module.
 
-    def __init__(self, eh_name, org_module: torch.nn.Module, num_groups:int = 4, multiplier:float = 1.0):
+    def __init__(self, eh_name, org_module: torch.nn.Module, num_groups:int = 4, multiplier:float = 1.0, target_block:str = ""):
         super().__init__()
         self.eh_name = eh_name
         self.num_groups = num_groups
         self.multiplier = multiplier
+        
         
         #とりまLinearだけ
         if org_module.__class__.__name__ == 'Linear':
@@ -59,18 +60,15 @@ class EHModule(torch.nn.Module):
         return y + z * self.multiplier
     
 class EHNetwork(torch.nn.Module):
-    def __init__(self, unet:UNet2DConditionModel, num_groups:int = 4, multiplier:float = 1.0, merge:bool = False, resume:str = None) -> None:
+    def __init__(self, text_encoder, unet:UNet2DConditionModel, up_only , train_encoder, num_groups:int = 4, multiplier:float = 1.0, merge:bool = False) -> None:
         super().__init__()
         self.num_groups = num_groups
         self.multiplier = multiplier
-        
+        self.target_block = target_block
         
         #unetのEHを作る
         self.unet_ehs = self.create_modules(EH_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE)
         print(f"create EH for U-Net: {len(self.unet_ehs)} modules.")
-        
-        if resume is not None:
-            state_dict = torch.load(resume)
         
         # ehを適用する
         for eh in self.unet_ehs:
@@ -88,7 +86,7 @@ class EHNetwork(torch.nn.Module):
     def create_modules(self,prefix, root_module: torch.nn.Module, target_replace_modules) -> list:
         ehs = []
         for name, module in root_module.named_modules():
-            if module.__class__.__name__ in target_replace_modules:
+            if module.__class__.__name__ in target_replace_modules and self.target_block in name:
                 for child_name, child_module in module.named_modules():
                     if child_module.__class__.__name__ == "Linear":
                         eh_name = prefix + '.' + name + '.' + child_name

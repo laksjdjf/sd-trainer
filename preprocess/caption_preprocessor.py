@@ -119,14 +119,14 @@ class CaptionProcessor(object):
         return f'{data}{character}{copyright}{artist}{general}'.lstrip().rstrip(',')
 
 def preprocess(file):
-    with open(os.path.join(args.dataset,file), 'r', encoding='UTF-8') as f:
+    with open(os.path.join(args.dataset[:-5] + "org",file), 'r', encoding='UTF-8') as f:
         caption = processor(ast.literal_eval(f.read().replace('"lazy"','lazy'))) #wd14tagger特有のバグ回避
     with open(os.path.join(args.dataset,file[:-4] + ".caption"),"w") as f:
         f.write(caption)
     return 
 
 def main():            
-    files = [file for file in os.listdir(args.dataset) if "txt" in file]
+    files = [file for file in os.listdir(args.dataset[:-5] + "org") if "txt" in file]
     with ProcessPoolExecutor(8) as e:
         results = list(tqdm(e.map(preprocess, files),total=len(files)))
     return 
