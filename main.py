@@ -252,7 +252,7 @@ def main(args):
             
             #logやsave
             final = total_steps == global_steps
-            save(config.model.input_path, global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, network, pfg)
+            save(config.model.input_path, global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, noise_scheduler, network, pfg)
     
         
 if __name__ == "__main__":

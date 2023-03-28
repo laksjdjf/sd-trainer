@@ -58,17 +58,17 @@ class Save:
         self.seed = seed
         
     @torch.no_grad()
-    def __call__(self, model_id, steps, final, logs, batch, text_encoder, unet, vae, tokenizer, network = None, pfg = None):
+    def __call__(self, model_id, steps, final, logs, batch, text_encoder, unet, vae, tokenizer, scheduler, network = None, pfg = None):
         if self.wandb:
             self.run.log(logs, step=steps)
         if steps % self.save_n_steps == 0 or final:
             print(f'チェックポイントをセーブするよ!')
-            pipeline = WrapStableDiffusionPipeline.from_pretrained(
-                    model_id,
+            pipeline = WrapStableDiffusionPipeline(
                     text_encoder=text_encoder,
                     vae=vae,
                     unet=unet,
                     tokenizer=tokenizer,
+                    scheduler=scheduler,
                     feature_extractor = None,
                     safety_checker = None
             )
@@ -82,7 +82,7 @@ class Save:
                 pipeline.save_pretrained(filename)
             
             if pfg is not None:
-                pfg.save_weights(filename + f'n-{pfg.num_tokens}.pt')
+                pfg.save_weights(filename + f'-n{pfg.num_tokens}.pt')
 
             #検証画像生成
             with torch.autocast('cuda'):
