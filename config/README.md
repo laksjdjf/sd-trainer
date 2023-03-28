@@ -12,7 +12,7 @@ v_prediction：SDv2(768)系の場合trueにする必要があります。
 
 ## dataset
 上にあるようにオリジナルデータセット等も読み込めます。
-argsが重要で、pathにはデータセットのパス、maskはmask学習の場合true、controlはpfgの場合trueです。
+argsが重要で、pathにはデータセットのパス、maskはmask学習の場合true、controlはpfgの場合trueです。promptでpfg用の共通プロンプト、prefixで全データの最小に同じ文字列を加えることができます。
 
 ## save
 セーブや検証画像の生成に関わる設定です。
