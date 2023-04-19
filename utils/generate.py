@@ -1,30 +1,15 @@
+#検証画像用のシンプルな生成器
+#pipelineを継承（したけどコンストラクタ以外はこのコードで完結）
+#autocastは使う側でやらせる
+
 import torch
-from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
+from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler, StableDiffusionPipeline
 from transformers import CLIPTextModel, CLIPTokenizer
 from PIL import Image
 import numpy as np
 from tqdm import tqdm
 
-class SDGenerator:
-    def __init__(self,model_id, dtype=torch.float32, device="cuda"):
-        '''
-        model_id：diffusersモデルのパス/huggingfaceのリポジトリ
-        dtype, device:わかるやろ
-        '''
-        self.tokenizer = CLIPTokenizer.from_pretrained(model_id, subfolder='tokenizer')
-        self.text_encoder = CLIPTextModel.from_pretrained(model_id, subfolder='text_encoder').eval().to(device, dtype=dtype)
-        self.vae = AutoencoderKL.from_pretrained(model_id, subfolder='vae').eval().to(device, dtype=dtype)
-        self.unet = UNet2DConditionModel.from_pretrained(model_id, subfolder='unet').eval().to(device, dtype=dtype)
-        try:
-            self.unet.set_use_memory_efficient_attention_xformers(True)
-            print("xformersを適用しますた。")
-        except:
-            print("xformersがインストールされていないようなのでそのままやります。")
-            
-        self.scheduler = DDIMScheduler.from_pretrained(model_id, subfolder="scheduler")
-        self.dtype = dtype
-        self.device = device
-
+class WrapStableDiffusionPipeline(StableDiffusionPipeline):
     def encode_prompts(self, prompts):
         '''
         プロンプトをとーくんにしてtext_encoderの隠れ状態を出力する。
@@ -32,7 +17,7 @@ class SDGenerator:
         '''
         with torch.no_grad():
             tokens = self.tokenizer(prompts, max_length=self.tokenizer.model_max_length, padding=True, truncation=True, return_tensors='pt').input_ids.to(self.device)
-            embs = self.text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(self.device, dtype = self.dtype)
+            embs = self.text_encoder(tokens, output_hidden_states=True).last_hidden_state
         return embs
 
     def decode_latents(self, latents):
@@ -48,11 +33,25 @@ class SDGenerator:
         pil_images = [Image.fromarray(image) for image in images]
         return pil_images
 
-    def __call__(self,prompts, negative_prompts, height:int = 896, width:int = 640, guidance_scale:float = 7.0, num_inference_steps:int = 50):
+    def generate(self,
+                 prompts,
+                 negative_prompts, 
+                 height:int = 896, 
+                 width:int = 640, 
+                 guidance_scale:float = 7.0, 
+                 num_inference_steps:int = 50, 
+                 pfg_feature:torch.Tensor = None,
+                 seed = 4545,
+                ):
         '''
         prompts, negative_promptsは文字列か文字列のリスト。
         negative_promptsが1個の場合はpromptsの数に合わせる。
         '''
+        
+        #乱数要素は初期ノイズだけかな・・？
+        #CNNは一貫性がないようだけどちょっとめんどいのでこれだけで
+        torch.manual_seed(seed)
+        
         if type(prompts) == str:
             prompts = [prompts]
         if type(negative_prompts) == str:
@@ -65,16 +64,27 @@ class SDGenerator:
 
         #プロンプト、ネガティブプロンプトのtext_encoder出力
         text_embs = self.encode_prompts(prompts+negative_prompts)
-
+        
+        if pfg_feature is not None:
+            cond, uncond = text_embs.chunk(2)
+            #cat (b,n1,d) + (1*b,n2,d)
+            cond = torch.cat([cond, pfg_feature.repeat(cond.shape[0],1,1)], dim=1)
+            #copy EOS
+            uncond = torch.cat([uncond, uncond[:,-1:,:].repeat(1,pfg_feature.shape[1],1)], dim=1)
+            
+            text_embs = torch.cat([cond, uncond], dim=0)
+        
         #スケジューラーのtimestepを設定
         self.scheduler.set_timesteps(num_inference_steps, device=self.device)
         timesteps = self.scheduler.timesteps
 
         #初期ノイズ
-        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device = self.device, dtype = self.dtype)
+        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device = self.device)
         latents = latents * self.scheduler.init_noise_sigma
-
-        for i,t in tqdm(enumerate(timesteps)):
+        
+        
+        progress_bar = tqdm(range(num_inference_steps), desc="Total Steps", leave=False)
+        for i,t in enumerate(timesteps):
             #入力を作成
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
@@ -89,6 +99,13 @@ class SDGenerator:
 
             #推定ノイズからノイズを取り除いたlatentsを求める
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            
+            progress_bar.update(1)
         
         images = self.decode_latents(latents)
+        
+        
+        #やったほうがいいのだろうか
+        torch.manual_seed(torch.seed())
+        
         return images

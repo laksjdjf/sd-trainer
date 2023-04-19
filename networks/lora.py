@@ -3,8 +3,9 @@
 import torch
 import math
 import os
+from networks.loha import LohaModule
 
-UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel"] #Attentionはいらないのでは？
+UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel", "ResnetBlock2D", "Downsample2D", "Upsample2D"] #Attentionはいらないのでは？
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
@@ -23,8 +24,29 @@ class LoRAModule(torch.nn.Module):
         if org_module.__class__.__name__ == 'Linear':
             in_dim = org_module.in_features
             out_dim = org_module.out_features
+            if lora_dim == "dynamic":
+                lora_dim = min(math.ceil(in_dim ** 0.5), math.ceil(out_dim ** 0.5)) * 2
+                self.lora_dim = lora_dim
             self.lora_down = torch.nn.Linear(in_dim, lora_dim, bias=False)
             self.lora_up = torch.nn.Linear(lora_dim, out_dim, bias=False)
+            
+        elif org_module.__class__.__name__ == 'Conv2d':
+            in_dim = org_module.in_channels
+            out_dim = org_module.out_channels
+            
+            if lora_dim == "dynamic":
+                lora_dim = min(math.ceil(in_dim ** 0.5), math.ceil(out_dim ** 0.5)) * 2
+                self.lora_dim = lora_dim
+            
+            self.lora_dim = min(self.lora_dim, in_dim, out_dim)
+            if self.lora_dim != lora_dim:
+                print(f"{lora_name} dim (rank) is changed to: {self.lora_dim}")
+
+            kernel_size = org_module.kernel_size
+            stride = org_module.stride
+            padding = org_module.padding
+            self.lora_down = torch.nn.Conv2d(in_dim, self.lora_dim, kernel_size, stride, padding, bias=False)
+            self.lora_up = torch.nn.Conv2d(self.lora_dim, out_dim, (1, 1), (1, 1), bias=False)
 
         if type(alpha) == torch.Tensor:
             alpha = alpha.detach().numpy()
@@ -49,15 +71,21 @@ class LoRAModule(torch.nn.Module):
     
 #LoRANetwork
 class LoRANetwork(torch.nn.Module):
-    def __init__(self, text_encoder, unet, lora_dim=4, target_block = "" ,multiplier=1.0, alpha=1) -> None:
+    def __init__(self, text_encoder, unet, up_only, train_encoder = False, rank=4, conv_rank=None, multiplier=1.0, alpha=1, module=None) -> None:
         super().__init__()
         self.multiplier = multiplier
-        self.lora_dim = lora_dim
+        self.lora_dim = rank
+        self.conv_lora_dim = conv_rank
         self.alpha = alpha
-        self.target_block = target_block
+        self.target_block = "up_blocks" if up_only else ""
+        
+        if module == "loha":
+            self.module = LohaModule
+        else:
+            self.module = LoRAModule
         
         #text encoderのloraを作る
-        if text_encoder is not None:
+        if train_encoder:
             self.text_encoder_loras = self.create_modules(LORA_PREFIX_TEXT_ENCODER,text_encoder,TEXT_ENCODER_TARGET_REPLACE_MODULE)
             print(f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
         else:
@@ -90,8 +118,14 @@ class LoRANetwork(torch.nn.Module):
                     if child_module.__class__.__name__ == "Linear":
                         lora_name = prefix + '.' + name + '.' + child_name
                         lora_name = lora_name.replace('.', '_')
-                        lora = LoRAModule(lora_name, child_module, self.multiplier, self.lora_dim, self.alpha)
+                        lora = self.module(lora_name, child_module, self.multiplier, self.lora_dim, self.alpha)
                         loras.append(lora)
+                    elif child_module.__class__.__name__ == "Conv2d" and self.conv_lora_dim is not None:
+                        lora_name = prefix + '.' + name + '.' + child_name
+                        lora_name = lora_name.replace('.', '_')
+                        lora = self.module(lora_name, child_module, self.multiplier, self.conv_lora_dim, self.alpha)
+                        loras.append(lora)
+                    
         return loras
     
     def prepare_optimizer_params(self, text_encoder_lr, unet_lr):
@@ -137,7 +171,7 @@ class LoRANetwork(torch.nn.Module):
         means = {k:v.float().abs().mean() for k,v in state_dict.items()} 
         
         target_keys = ["lora_up","lora_down",
-                       #up onlyに対応できない"down_blocks","mid_block","up_blocks",
+                       "down_blocks","mid_block","up_blocks",
                        "to_q","to_k","to_v","to_out",
                        "ff_net_0","ff_net_2",
                        "attn1","attn2"
