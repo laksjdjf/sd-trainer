@@ -52,19 +52,19 @@ class BaseDataset(Dataset):
         batch = {}
         samples = self.batch_samples[i]
 
-        latents = self.__get_latents(samples)
+        latents = self.get_latents(samples)
         batch["latents"] = torch.cat([latents]*self.minibatch_repeat, dim=0)
-        captions = self.__get_captions(samples)
+        captions = self.get_captions(samples)
         batch["captions"] = captions * self.minibatch_repeat
 
         if self.mask:
-            masks = self.__get_masks(samples)
+            masks = self.get_masks(samples)
             batch["masks"] = torch.cat([masks]*self.minibatch_repeat, dim=0)
         if self.pfg:
-            pfg = self.__get_pfg(samples)
+            pfg = self.get_pfg(samples)
             batch["pfg"] = torch.cat([pfg]*self.minibatch_repeat, dim=0)
         if self.control:
-            control = self.__get_control(samples)
+            control = self.get_control(samples)
             batch["control"] = torch.cat([control]*self.minibatch_repeat, dim=0)
 
         return batch
@@ -79,12 +79,12 @@ class BaseDataset(Dataset):
                                       for i in range(0, len(self.bucket2file[key]), self.minibatch_size)])
         random.shuffle(self.batch_samples)
 
-    def __get_latents(self, samples):
+    def get_latents(self, samples):
         latents = torch.stack([torch.tensor(np.load(os.path.join(self.path, "latents", sample + ".npy"))) for sample in samples])
         latents = latents.to(memory_format=torch.contiguous_format).float()  # これなに
         return latents
 
-    def __get_captions(self, samples):
+    def get_captions(self, samples):
         captions = []
         for sample in samples:
             if self.prompt is None:
@@ -98,22 +98,37 @@ class BaseDataset(Dataset):
             captions.append(caption)
         return captions
 
-    def __get_masks(self, samples):
+    def get_masks(self, samples):
         masks = torch.stack([torch.tensor(np.load(os.path.join(self.path, "mask", sample + ".npz"))["arr_0"]).unsqueeze(0).repeat(4, 1, 1)
                              for sample in samples])
         masks.to(memory_format=torch.contiguous_format).float()
         return masks
 
-    def __get_pfg(self, samples):
+    def get_pfg(self, samples):
         pfg = torch.stack([torch.tensor(np.load(os.path.join(self.path, "pfg", sample + ".npz"))["controll"]).unsqueeze(0)
                            for sample in samples])
         pfg.to(memory_format=torch.contiguous_format).float()
         return pfg
-
-    def __get_control(self, samples):
+    
+    def get_control(self, samples):
         images = []
         for sample in samples:
             image = Image.open(os.path.join(self.path, "control", sample + f".png"))
+            image = np.array(image.convert("RGB"))
+            image = image[None, :]
+            images.append(image)
+        images_tensor = np.concatenate(images, axis=0)
+        images_tensor = np.array(images_tensor).astype(np.float32) / 255.0
+        images_tensor = images_tensor.transpose(0, 3, 1, 2)
+        images_tensor = torch.from_numpy(images_tensor).to(memory_format=torch.contiguous_format).float()
+        return images_tensor
+
+# controlnetの入力データはいろいろ複雑なので、継承で柔軟に対応できるようにする。
+class ControlDataset(BaseDataset):   
+    def get_control(self, samples):
+        images = []
+        for sample in samples:
+            image = Image.open(os.path.join(self.path[:-4] + "org", sample + f".png"))
             image = np.array(image.convert("RGB"))
             image = image[None, :]
             images.append(image)
