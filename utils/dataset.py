@@ -113,7 +113,7 @@ class BaseDataset(Dataset):
     def __get_control(self, samples):
         images = []
         for sample in samples:
-            image = Image.open(os.path.join(self.path, "control", sample + f"_edge.png"))
+            image = Image.open(os.path.join(self.path, "control", sample + f".png"))
             image = np.array(image.convert("RGB"))
             image = image[None, :]
             images.append(image)
