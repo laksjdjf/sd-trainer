@@ -117,6 +117,7 @@ class Save:
                                               batch=batch,
                                               pfg_feature=pfg_feature,
                                               controlnet=controlnet,
+                                              guide_image= batch["control"][i].unsqueeze(0) if controlnet is not None else None,
                                               seed=self.seed + i
                                               )[0]
                     if self.wandb:

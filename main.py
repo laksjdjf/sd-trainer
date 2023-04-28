@@ -128,14 +128,15 @@ def main(config):
 
     # 勾配チェックポイントによるVRAM削減（計算時間増）
     if config.train.gradient_checkpointing:
+        unet.train()
+        unet.enable_gradient_checkpointing()
         if config.train.train_encoder:
             text_encoder.text_model.embeddings.requires_grad_(True)  # 先頭のモジュールが勾配有効である必要があるらしい
-            unet.enable_gradient_checkpointing()
+            text_encoder.train() #trainがTrueである必要があるらしい
             text_encoder.gradient_checkpointing_enable()
         else:
             if not config.feature.up_only:
                 unet.conv_in.requires_grad_(True)
-            unet.enable_gradient_checkpointing()
         if controlnet is not None:
             controlnet.enable_gradient_checkpointing()
         print("gradient_checkpointing を適用しました。")

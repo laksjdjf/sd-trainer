@@ -123,7 +123,6 @@ class BaseDataset(Dataset):
         images_tensor = torch.from_numpy(images_tensor).to(memory_format=torch.contiguous_format).float()
         return images_tensor
 
-# controlnetの入力データはいろいろ複雑なので、継承で柔軟に対応できるようにする。
 class ControlDataset(BaseDataset):   
     def get_control(self, samples):
         images = []

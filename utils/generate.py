@@ -39,9 +39,9 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
                  width: int = 640,
                  guidance_scale: float = 7.0,
                  num_inference_steps: int = 50,
-                 batch=None,
                  pfg_feature: torch.Tensor = None,
                  controlnet=None,
+                 guide_image=None,
                  seed=4545,
                  ):
 
@@ -82,9 +82,9 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
             if controlnet is not None:
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     latent_model_input,
-                    timesteps,
+                    t,
                     encoder_hidden_states=encoder_hidden_state,
-                    controlnet_cond=batch["control"].to(latents.device),
+                    controlnet_cond=guide_image,
                     return_dict=False,
                 )
             else:
