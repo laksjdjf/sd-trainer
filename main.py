@@ -93,6 +93,7 @@ def main(config):
             controlnet = ControlNetModel.from_pretrained(config.controlnet.resume)
         else:
             controlnet = ControlNetModel.from_unet(unet)
+        controlnet.config.global_pool_conditions = config.controlnet.global_average_pooling
         if config.train.use_xformers:
             controlnet.enable_xformers_memory_efficient_attention()
         controlnet.train(config.controlnet.train)
@@ -219,9 +220,6 @@ def main(config):
                         controlnet_cond=batch["control"].to(latents.device),
                         return_dict=False,
                     )
-                    if config.controlnet.global_average_pooling:
-                        down_block_res_samples = [torch.mean(c, dim=(2, 3), keepdim=True) for c in down_block_res_samples]
-                        mid_block_res_sample = torch.mean(mid_block_res_sample, dim=(2, 3), keepdim=True)
                 else:
                     down_block_res_samples, mid_block_res_sample = None, None
 
