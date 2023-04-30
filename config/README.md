@@ -12,7 +12,7 @@ v_prediction：SDv2(768)系の場合trueにする必要があります。
 
 ## dataset
 上にあるようにオリジナルデータセット等も読み込めます。
-argsが重要で、pathにはデータセットのパス、maskはmask学習の場合true、controlはpfgの場合trueです。promptでpfg用の共通プロンプト、prefixで全データの最小に同じ文字列を加えることができます。
+argsが重要で、pathにはデータセットのパス、maskはmask学習の場合true、controlはpfgの場合trueです。promptでpfg用の共通プロンプト、prefixで全データの最初に同じ文字列を加えることができます。
 
 ## save
 セーブや検証画像の生成に関わる設定です。
@@ -24,7 +24,7 @@ over_writeはfalseにすると上書きせず各チェックポイントを残�
 あとはまあなんとなくわかるでしょう。
 
 ## train
-訓練に関わる設定です。anoはfalseでfloat16、"bfloat16"でbfloat16、falseでfloat32になります。
+訓練に関わる設定です。ampはfalseでfloat16、"bfloat16"でbfloat16、falseでfloat32になります。
 
 ## feature
 わたしのオリジナル実装です。
@@ -35,7 +35,7 @@ up_only：UNetのup_blocksのみを学習するオプションです。
 
 step_range：拡散過程の学習範囲を制限するものです。
 
-test_steps：1以上にするとそのステップでプログラムが終了します。つまりテスト用です。
+test_steps：1以上にするとそのステップでモデルのセーブや検証画像の生成をしてプログラムが終了します。つまりテスト用です。
 
 ## optimizer
 最適化関数を設定します。8bitAdamの場合は、module: bitsandbytes.optim.AdamW8bit とすればできます。他にもlionやらなんやら多分できます。
