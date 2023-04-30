@@ -114,7 +114,6 @@ class Save:
                                               self.negative_prompt,
                                               width=self.resolution[0],
                                               height=self.resolution[1],
-                                              batch=batch,
                                               pfg_feature=pfg_feature,
                                               controlnet=controlnet,
                                               guide_image= batch["control"][i].unsqueeze(0) if controlnet is not None else None,
