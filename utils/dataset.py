@@ -123,6 +123,7 @@ class BaseDataset(Dataset):
         images_tensor = torch.from_numpy(images_tensor).to(memory_format=torch.contiguous_format).float()
         return images_tensor
 
+# controlnetのguide_imageはタスクごとに処理を変えるので継承で対応
 class ControlDataset(BaseDataset):   
     def get_control(self, samples):
         images = []

@@ -51,7 +51,7 @@ class Save:
         self.wandb = wandb_name
 
         if self.wandb:
-            self.run = wandb.init(project=self.wandb, name=output)
+            self.run = wandb.init(project=self.wandb, name=output, dir="wandb")
 
         self.save_n_steps = save_n_steps if save_n_steps is not None else save_n_epochs * steps_per_epoch
 
@@ -59,7 +59,7 @@ class Save:
 
         self.resolution = resolution.split(",")
         self.resolution = (int(self.resolution[0]), int(self.resolution[-1]))  # 長さが1の場合同じ値になる
-
+            
         self.over_write = over_write
 
         self.prompt = prompt
@@ -109,6 +109,10 @@ class Save:
                         pfg_feature = pfg(batch["pfg"][i].unsqueeze(0).to("cuda"))
                     else:
                         pfg_feature = None
+                        
+                    if controlnet is not None:
+                        guide_image = batch["control"][i].unsqueeze(0).to(controlnet.device,dtype =controlnet.dtype)
+                        self.resolution = (guide_image.shape[3], guide_image.shape[2]) #width, heigh_
 
                     image = pipeline.generate(prompt,
                                               self.negative_prompt,
@@ -116,7 +120,7 @@ class Save:
                                               height=self.resolution[1],
                                               pfg_feature=pfg_feature,
                                               controlnet=controlnet,
-                                              guide_image= batch["control"][i].unsqueeze(0) if controlnet is not None else None,
+                                              guide_image = guide_image,
                                               seed=self.seed + i
                                               )[0]
                     if self.wandb:

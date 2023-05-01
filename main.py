@@ -14,9 +14,7 @@ from diffusers.optimization import get_scheduler
 
 from transformers import CLIPTextModel, CLIPTokenizer
 
-# データローダー用の関数
-
-
+# データローダー用の関数s
 def collate_fn(x):
     return x[0]
 
