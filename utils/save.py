@@ -112,7 +112,9 @@ class Save:
                         
                     if controlnet is not None:
                         guide_image = batch["control"][i].unsqueeze(0).to(controlnet.device,dtype =controlnet.dtype)
-                        self.resolution = (guide_image.shape[3], guide_image.shape[2]) #width, heigh_
+                        self.resolution = (guide_image.shape[3], guide_image.shape[2]) #width, height
+                    else:
+                        guide_image = None
 
                     image = pipeline.generate(prompt,
                                               self.negative_prompt,
