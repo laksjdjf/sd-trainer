@@ -263,7 +263,7 @@ def main(config):
             final = total_steps == global_steps # 最後のステップかどうか
             save(config.model.input_path, global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, noise_scheduler, network, pfg, controlnet)
             if final:
-                exit()
+                return
 
 if __name__ == "__main__":
     config = OmegaConf.load(sys.argv[1])
