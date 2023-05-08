@@ -1,28 +1,30 @@
-#### This code is based on https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
+# This code is based on https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
 
 import torch
 import os
 from diffusers import UNet2DConditionModel
 
-UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel"] #Attentionはいらないのでは？
+UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel"]  # Attentionはいらないのでは？
 EH_PREFIX_UNET = 'EH_unet'
 
-#EhModule
-class EHModule(torch.nn.Module):
-#replaces forward method of the original Linear, instead of replacing the original Linear module.
+# EhModule
 
-    def __init__(self, eh_name, org_module: torch.nn.Module, num_groups:int = 4, multiplier:float = 1.0, target_block:str = ""):
+
+class EHModule(torch.nn.Module):
+    # replaces forward method of the original Linear, instead of replacing the original Linear module.
+
+    def __init__(self, eh_name, org_module: torch.nn.Module, num_groups: int = 4, multiplier: float = 1.0, target_block: str = ""):
         super().__init__()
         self.eh_name = eh_name
         self.num_groups = num_groups
         self.multiplier = multiplier
-        
-        
-        #とりまLinearだけ
+
+        # とりまLinearだけ
         if org_module.__class__.__name__ == 'Linear':
-            in_dim = org_module.in_features 
+            in_dim = org_module.in_features
             out_dim = org_module.out_features
-            self.linear = torch.nn.Linear(in_dim // num_groups, out_dim // num_groups, bias=False)
+            self.linear = torch.nn.Linear(
+                in_dim // num_groups, out_dim // num_groups, bias=False)
 
         torch.nn.init.zeros_(self.linear.weight)
         self.org_module = org_module                  # remove in applying
@@ -31,59 +33,57 @@ class EHModule(torch.nn.Module):
         self.org_forward = self.org_module.forward
         self.org_module.forward = self.forward
         del self.org_module
-    
+
     def merge_to(self):
         print(f"merging {self.eh_name}")
         row, column = self.org_module.weight.shape
         new_weight = torch.zeros((row, column))
-        
-        #ごみ、良い方法おせーて
+
+        # ごみ、良い方法おせーて
         for i in range(self.num_groups):
-            new_weight[i * row // self.num_groups:(i+1) * row // self.num_groups,i * column // self.num_groups:(i+1) * column // self.num_groups] = self.linear.weight
-            
-        self.org_module.weight = torch.nn.Parameter(self.org_module.weight + new_weight * self.multiplier)
+            new_weight[i * row // self.num_groups:(i+1) * row // self.num_groups, i * column // self.num_groups:(
+                i+1) * column // self.num_groups] = self.linear.weight
+
+        self.org_module.weight = torch.nn.Parameter(
+            self.org_module.weight + new_weight * self.multiplier)
 
     def forward(self, x):
-        #(B:バッチサイズ,Np:トークン数,D:埋め込み次元/チャンネル)
+        # (B:バッチサイズ,Np:トークン数,D:埋め込み次元/チャンネル)
         shape = x.shape
-        
-        #(B,Np,in_D) -> (B,Np,out_D)
+
+        # (B,Np,in_D) -> (B,Np,out_D)
         y = self.org_forward(x)
-        
-        #(B,Np,in_D) -> (B,Np,n,in_D/n)
-        z = x.reshape(shape[0],shape[1],self.num_groups,-1)
-        #(B,Np,n,in_D/n) -> (B,Np,n,out_D/n)
+
+        # (B,Np,in_D) -> (B,Np,n,in_D/n)
+        z = x.reshape(shape[0], shape[1], self.num_groups, -1)
+        # (B,Np,n,in_D/n) -> (B,Np,n,out_D/n)
         z = self.linear(z)
-        #(B,Np,n,out_D/n) -> (B,Np,out_D)
-        z = z.reshape(shape[0],shape[1],-1)
-        
+        # (B,Np,n,out_D/n) -> (B,Np,out_D)
+        z = z.reshape(shape[0], shape[1], -1)
+
         return y + z * self.multiplier
-    
+
+
 class EHNetwork(torch.nn.Module):
-    def __init__(self, text_encoder, unet:UNet2DConditionModel, up_only , train_encoder, num_groups:int = 4, multiplier:float = 1.0, merge:bool = False) -> None:
+    def __init__(self, text_encoder, unet: UNet2DConditionModel, up_only, train_encoder, num_groups: int = 4, multiplier: float = 1.0, merge: bool = False) -> None:
         super().__init__()
         self.num_groups = num_groups
         self.multiplier = multiplier
-        self.target_block = target_block
-        
-        #unetのEHを作る
-        self.unet_ehs = self.create_modules(EH_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE)
+        self.target_block = "up_blocks" if up_only else ""
+
+        # unetのEHを作る
+        self.unet_ehs = self.create_modules(
+            EH_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE)
         print(f"create EH for U-Net: {len(self.unet_ehs)} modules.")
-        
+
         # ehを適用する
         for eh in self.unet_ehs:
             self.add_module(eh.eh_name, eh)
-            if resume is not None:
-                eh.linear.weight = torch.nn.Parameter(state_dict[eh.eh_name + ".linear.weight"])
-            if merge:
-                eh.merge_to() #重みのマージ
-            else:
-                eh.apply_to() #モジュールのあぷらい
+            eh.apply_to()  # モジュールのあぷらい
         self.requires_grad_(True)
-        
 
-    #見づらいのでメソッドにしちゃう
-    def create_modules(self,prefix, root_module: torch.nn.Module, target_replace_modules) -> list:
+    # 見づらいのでメソッドにしちゃう
+    def create_modules(self, prefix, root_module: torch.nn.Module, target_replace_modules) -> list:
         ehs = []
         for name, module in root_module.named_modules():
             if module.__class__.__name__ in target_replace_modules and self.target_block in name:
@@ -91,16 +91,17 @@ class EHNetwork(torch.nn.Module):
                     if child_module.__class__.__name__ == "Linear":
                         eh_name = prefix + '.' + name + '.' + child_name
                         eh_name = eh_name.replace('.', '_')
-                        eh = EHModule(eh_name, child_module, self.num_groups, self.multiplier)
+                        eh = EHModule(eh_name, child_module,
+                                      self.num_groups, self.multiplier)
                         ehs.append(eh)
         return ehs
-    
+
     def prepare_optimizer_params(self, unet_lr):
         self.requires_grad_(True)
         all_params = []
 
         params = []
-        [params.extend(eh.parameters()) for eh in self.unet_ehs] #ehの全パラメータ
+        [params.extend(eh.parameters()) for eh in self.unet_ehs]  # ehの全パラメータ
         param_data = {'params': params}
         if unet_lr is not None:
             param_data['lr'] = unet_lr
