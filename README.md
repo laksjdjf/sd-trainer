@@ -39,7 +39,47 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 ```
 
 # Config
-[説明](config/README.md)
+学習設定は全て設定ファイルに入力します。設定例が```config```にあります。[説明](config/README.md)
+
+# Feature
+実装した機能
++ xformers、AMP、gradient_checkpointing等のメモリ効率化手法
++ Aspect ratio bucketingによる複数のアスペクト比の学習
++ LoRA、LoCon、Lohaの学習
++ Maskを使った学習
++ ControlNetの学習
++ PFGの学習
++ wandbによるログチェック
++ 設定ファイルからOptimizerを自由に選べる
++ データセット、セーブ機能の拡張性（クラスの定義のみで使えるはず）
++ LoRAとControlNetの同時学習・LoRAを適用だけして学習対象としないといったこともできる（はず）。ただそれぞれ別々の学習率を設定できないのでできるようにしたいがあまり複雑にしたくもない。
++ ミニバッチリピート（データセットが小規模のとき、ミニバッチを同一データで拡大することで大きなバッチサイズを確保できます。同一ステップに同一データがあってもtimestepが違うので多少意味はあると思います。）
++ ステップ範囲指定（timestepの範囲を限定します。"0.0,0.5"とかにすればスタイルを、"0.5,1.0"とかにすれば構図を学びやすくなるかもしれない。）
++ UNetのup_blocksのみの学習（LoRAにも対応）
++ キャプションの先頭に文字列（"anime, "とか？）を追加するやつ
++ キャプションをランダムにドロップアウトする機能（大規模学習する場合以外には必要ないと思います。）
+
+実装してない機能
++ Dreambooth（データセットを継承すれば割と簡単に実装できそうな気がする）
++ hypernetworks
++ Textual Inversion
++ Latentをcacheしないで学習（訓練ループ自体には機能がありますが、対応するデータセットがない）
++ データ拡張（Latentにしてしまうためありません。）
++ トークン長の拡張（個人的に学習段階でトークン長の拡張を行うのはよくないと思うのですがどうでしょうか。）
+
+実装したい機能
++ ckpt, safetensors(compvis？)モデルの対応
++ LoRA等のsafetensorsによる保存
++ 複数GPU対応
++ gradient accumulation
++ DeepFloyd IFへの対応（検証画像生成周りをもうちょっとなんとかしたい）
++ Lokr
++ [tomesd](https://github.com/dbolya/tomesd)（実験中、実装は簡単）
++ [Min-SNR-weight](https://github.com/TiankaiHang/Min-SNR-Diffusion-Training)
++ [noise_offset](https://www.crosslabs.org/blog/diffusion-with-offset-noise)
++ ControlNetのDiffusers to ckpt（実装してますが、かなり適当なコードなので公開していません。必要な人いる？）
++ VAEの学習（誰か損失関数教えて）
+
 
 # 参考リポジトリ
 訓練ループなどの中核コード：https://github.com/harubaru/waifu-diffusion
