@@ -6,7 +6,7 @@ import json
 import random
 import numpy as np
 from transformers import CLIPTokenizer
-
+from torchvision import transforms
 # dataset:tokenizer, path, batch_size, minibatch_repeat, metadataを引数に取ることが必須。
 # batchは"latents"か"images"のどちらかと、"captions"が必須。
 
@@ -137,3 +137,35 @@ class ControlDataset(BaseDataset):
         images_tensor = images_tensor.transpose(0, 3, 1, 2)
         images_tensor = torch.from_numpy(images_tensor).to(memory_format=torch.contiguous_format).float()
         return images_tensor
+
+
+class IFDataset(BaseDataset):
+    transform = transforms.Compose(
+                        [
+                        transforms.ToTensor(), 
+                        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                         ])
+    def get_latents(self, samples):
+        tensors = []
+        for sample in samples:
+            image = Image.open(os.path.join(self.path[:-4] + "org", sample + f".png"))
+            image = expand2square(image, (255,255,255))
+            image = image.resize((64,64))
+            tensor = self.transform(image)
+            tensors.append(tensor)
+        tensors = torch.stack(tensors)
+        tensors = tensors.to(memory_format=torch.contiguous_format).float()
+        return tensors
+    
+def expand2square(pil_img, background_color):
+    width, height = pil_img.size
+    if width == height:
+        return pil_img
+    elif width > height:
+        result = Image.new(pil_img.mode, (width, width), background_color)
+        result.paste(pil_img, (0, (width - height) // 2))
+        return result
+    else:
+        result = Image.new(pil_img.mode, (height, height), background_color)
+        result.paste(pil_img, ((height - width) // 2, 0))
+        return result
