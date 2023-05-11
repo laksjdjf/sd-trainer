@@ -59,7 +59,7 @@ class BaseDataset(Dataset):
 
         if self.mask:
             masks = self.get_masks(samples)
-            batch["masks"] = torch.cat([masks]*self.minibatch_repeat, dim=0)
+            batch["mask"] = torch.cat([masks]*self.minibatch_repeat, dim=0)
         if self.pfg:
             pfg = self.get_pfg(samples)
             batch["pfg"] = torch.cat([pfg]*self.minibatch_repeat, dim=0)
