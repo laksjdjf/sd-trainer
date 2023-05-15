@@ -173,7 +173,7 @@ def main(config):
     )
 
     save_module = get_attr_from_config(config.save.module)
-    save = save_module(config.model.output_name, config.train.train_unet, step_per_epoch, **config.save.args)
+    save = save_module(config, step_per_epoch, **config.save.args)
 
     global_steps = 0
 
@@ -261,7 +261,7 @@ def main(config):
             progress_bar.set_postfix(logs)
 
             final = total_steps == global_steps # 最後のステップかどうか
-            save(config.model.input_path, global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, noise_scheduler, network, pfg, controlnet)
+            save(global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, noise_scheduler, network, pfg, controlnet)
             if final:
                 return
 

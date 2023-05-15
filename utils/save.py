@@ -20,8 +20,7 @@ DIRECTORIES = [
 
 class Save:
     def __init__(self,
-                 output: str,
-                 train_unet: bool,
+                 config,
                  steps_per_epoch: int,
                  wandb_name: str = "sd-trainer",
                  image_logs: str = "image_logs",
@@ -38,8 +37,8 @@ class Save:
         # save_n_epochsよりsave_n_stepsが優先となる。
         # wandbを使うときはimage_logsに画像を保存しない。
 
-        self.output = output
-        self.train_unet = train_unet
+        self.config = config
+        self.output = config.model.output_name
         self.image_logs = image_logs
         if self.image_logs is not None:
             os.makedirs(self.image_logs, exist_ok=True)
@@ -51,7 +50,7 @@ class Save:
         self.wandb = wandb_name
 
         if self.wandb:
-            self.run = wandb.init(project=self.wandb, name=output, dir="wandb")
+            self.run = wandb.init(project=self.wandb, name=self.output, dir="wandb")
 
         self.save_n_steps = save_n_steps if save_n_steps is not None else save_n_epochs * steps_per_epoch
 
@@ -68,7 +67,7 @@ class Save:
         self.seed = seed
 
     @torch.no_grad()
-    def __call__(self, model_id, steps, final, logs, batch, text_encoder, unet, vae, tokenizer, scheduler, network=None, pfg=None, controlnet=None):
+    def __call__(self, steps, final, logs, batch, text_encoder, unet, vae, tokenizer, scheduler, network=None, pfg=None, controlnet=None):
         if self.wandb:
             self.run.log(logs, step=steps)
         if steps % self.save_n_steps == 0 or final:
@@ -85,16 +84,16 @@ class Save:
 
             filename = f"{self.output}" if self.over_write else f"{self.output}_{steps}"
 
-            if self.train_unet:
+            if self.config.train.train_unet:
                 pipeline.save_pretrained(os.path.join("trained/models", filename))
 
-            if network is not None:
+            if network is not None and self.config.network.train:
                 network.save_weights(os.path.join("trained/networks", filename + '.pt'))
 
-            if controlnet is not None:
+            if controlnet is not None and self.config.controlnet.train:
                 controlnet.save_pretrained(os.path.join("trained/controlnet", filename))
 
-            if pfg is not None:
+            if pfg is not None and self.config.pfg.train:
                 pfg.save_weights(os.path.join("trained/pfg", filename + '.pt'))
 
             # 検証画像生成
