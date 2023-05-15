@@ -2,6 +2,6 @@
 diffusers>=0.16.1
 accelerate
 wandb
-transformers>=4.25.0
+transformers==4.28.1
 omegaconf
 safetensors
