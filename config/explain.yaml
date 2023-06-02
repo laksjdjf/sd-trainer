@@ -55,3 +55,29 @@ feature:
 optimizer:
     module: torch.optim.AdamW #いろいろなoptimizerが使えます。
     #args: #引数も指定できます。
+    
+#controlnetの学習の場合
+controlnet:
+    resume: null #学習対象のControlNetを指定できます(diffusers限定)
+    train: true
+    global_average_pooling: false
+    resume: null
+
+#pfgの学習の場合
+pfg:
+    resume: null
+    train: true
+    args:
+        input_size: 768 
+        cross_attention_dim: 1024 #v1なら768
+        num_tokens: 10
+       
+#LoRAの学習の場合
+network:
+    module: networks.lora.LoRANetwork
+    train: true
+    resume: null
+    args:
+        rank: 16 # "dynamic"で動的に決定
+        conv_rank: null # 指定するとloconになる
+        module: null # "loha"でlohaになる
