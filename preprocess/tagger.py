@@ -78,10 +78,14 @@ def main():
         tags_names = label_names[4:]
         found_tags = tags_names[tags_names["probs"] > args.threshold].sort_values("probs",ascending=False)[["name"]]
         tags = " ".join(list(found_tags["name"]))
-        with open(path + batch_keys[j] + ".txt","r") as f:
-            caption = f.read()
-        with open(output_path + batch_keys[j] + ".txt","w") as f:
-            f.write(caption[:-1] + ', "tagger": "' + tags + '"}')
+        if args.make_caption:
+            with open(output_path + batch_keys[j] + ".caption","w") as f:
+                f.write(tags)
+        else:
+            with open(path + batch_keys[j] + ".txt","r") as f:
+                caption = f.read()
+            with open(output_path + batch_keys[j] + ".txt","w") as f:
+                f.write(caption[:-1] + ', "tagger": "' + tags + '"}')
     imgs = []
     batch_keys = []
     print(miss_id)
