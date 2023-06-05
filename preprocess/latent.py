@@ -67,13 +67,10 @@ def main_batch():
 
     path = args.directory.rstrip("/") + "/"
     output_path = args.output_path.rstrip("/") + "/"
-
+    os.makedirs(output_path, exist_ok=True)
     exist_files = [file[:-4] for file in os.listdir(output_path) if ".npy" in file]
-
     with open(path + "buckets.json", "r") as f:
         buckets = json.load(f)
-
-    os.makedirs(output_path, exist_ok=True)
 
     for key in buckets.keys():
         image_tensors = []
