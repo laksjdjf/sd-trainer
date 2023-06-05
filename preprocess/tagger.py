@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from Utils import dbimutils
+import dbimutils
 
 from tensorflow.keras.models import load_model
 
@@ -17,6 +17,7 @@ parser.add_argument('--end', '-e', required=False, type=int)
 parser.add_argument('--image_size', '-i', required=False, default=448, type=int)
 parser.add_argument('--batch_size', '-b', required=False, default=64, type=int)
 parser.add_argument('--threshold', '-t', required=False, default=0.35, type=float)
+parser.add_argument('--make_caption', '-m', action='store_true', help='make caption')
 args = parser.parse_args()
 
 #WD 1.4 tagger
@@ -29,8 +30,7 @@ def main():
     files = os.listdir(path)
     end_id = args.end if args.end is not None else len(files)
     
-    if not os.path.exists(output_path):
-        os.mkdir(output_path)
+    os.makedirs(output_path, exist_ok=True)
     
     miss_id = []
     imgs = []
@@ -60,10 +60,14 @@ def main():
                 tags_names = label_names[4:]
                 found_tags = tags_names[tags_names["probs"] > args.threshold].sort_values("probs",ascending=False)[["name"]]
                 tags = " ".join(list(found_tags["name"]))
-                with open(path + batch_keys[j] + ".txt","r") as f:
-                    caption = f.read()
-                with open(output_path + batch_keys[j] + ".txt","w") as f:
-                    f.write(caption[:-1] + ', "tagger": "' + tags + '"}')
+                if args.make_caption:
+                    with open(output_path + batch_keys[j] + ".caption","w") as f:
+                        f.write(tags)
+                else:
+                    with open(path + batch_keys[j] + ".txt","r") as f:
+                        caption = f.read()
+                    with open(output_path + batch_keys[j] + ".txt","w") as f:
+                        f.write(caption[:-1] + ', "tagger": "' + tags + '"}')
             imgs = []
             batch_keys = []
     

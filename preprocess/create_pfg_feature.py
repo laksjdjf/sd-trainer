@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from Utils import dbimutils
+import dbimutils
 
 from tensorflow.keras.models import load_model, Model
 
@@ -28,8 +28,7 @@ def main():
     files = os.listdir(path)
     end_id = args.end if args.end is not None else len(files)
     
-    if not os.path.exists(output_path):
-        os.mkdir(output_path)
+    os.makedirs(output_path, exist_ok=True)
     
     miss_id = []
     imgs = []
