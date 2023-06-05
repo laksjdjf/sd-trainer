@@ -12,6 +12,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--directory', '-d', type=str, required=True)
 parser.add_argument('--output_path', '-o', type=str, required=True)
+parser.add_argument('--tagger_path', '-p', type=str, default="wd-v1-4-vit-tagger", required=True)
 parser.add_argument('--start', '-s', required=False, default=0, type=int)
 parser.add_argument('--end', '-e', required=False, type=int)
 parser.add_argument('--image_size', '-i', required=False, default=448, type=int)
@@ -22,8 +23,8 @@ args = parser.parse_args()
 
 #WD 1.4 tagger
 def main():
-    model = load_model("wd-v1-4-vit-tagger")
-    label_names = pd.read_csv("wd-v1-4-vit-tagger/selected_tags.csv")
+    model = load_model(args.tagger_path)
+    label_names = pd.read_csv(os.path.join(args.tagger_path,"selected_tags.csv"))
     
     path = args.directory.rstrip("/") + "/"
     output_path = args.output_path.rstrip("/") + "/"
