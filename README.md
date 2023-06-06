@@ -17,7 +17,7 @@ dataset_directory
   ||-hoge.png
   |-mask #maskの場合、create_mask.pyで作れる
   ||-hoge.npz
-  |-pfg #pfgの場合、tagger_control.pyで作れる
+  |-pfg #pfgの場合、create_pfg_feature.pyで作れる
   ||-hoge.npz
 ```
 
