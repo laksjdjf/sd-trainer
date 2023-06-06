@@ -45,6 +45,7 @@ train:
     amp: "bfloat16" #amp trueだとfloat16
     gradient_checkpointing: false #trueでVRAM使用量減、計算時間増
     use_xformers: true #xformersを使う
+    seed: 4545
     
 feature:
     minibatch_repeat: 1 #少ないデータでバッチサイズをあげるためのものだがちゃんとできてるか自信がないので非推奨
