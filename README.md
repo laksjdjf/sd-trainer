@@ -1,4 +1,6 @@
 # sd-trainer
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/laksjdjf/sd-trainer/sd_trainer_tutorial.ipynb)
+
 このコードはStable Diffusionのファインチューニング用コードです。
 データセット、設定ファイルを用意して、```python main.py <config_file>```で実行できます。
 # Preprocess
