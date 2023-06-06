@@ -8,7 +8,6 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from PIL import Image
 from tqdm import tqdm
 
-
 class WrapStableDiffusionPipeline(StableDiffusionPipeline):
     def encode_prompts(self, prompts):
         with torch.no_grad():
@@ -32,20 +31,26 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         pil_images = [Image.fromarray(image) for image in images]
         return pil_images
 
-    def generate(self,
-                 prompts,
-                 negative_prompts,
-                 height: int = 896,
-                 width: int = 640,
-                 guidance_scale: float = 7.0,
-                 num_inference_steps: int = 50,
-                 pfg_feature: torch.Tensor = None,
-                 controlnet=None,
-                 guide_image=None,
-                 seed=4545,
-                 ):
-
-        torch.manual_seed(seed)
+    def generate(
+        self,
+        prompts,
+        negative_prompts,
+        height: int = 896,
+        width: int = 640,
+        guidance_scale: float = 7.0,
+        num_inference_steps: int = 50,
+        pfg_feature: torch.Tensor = None,
+        controlnet=None,
+        guide_image=None,
+        seed=4545,
+    ):
+        
+        rng_state = torch.get_rng_state()
+        cuda_rng_state = torch.cuda.get_rng_state()
+        
+        if seed is not None:
+            torch.manual_seed(seed)
+            torch.cuda.manual_seed(seed)
 
         if type(prompts) == str:
             prompts = [prompts]
@@ -65,7 +70,8 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
                 [cond, pfg_feature.repeat(cond.shape[0], 1, 1)], dim=1)
 
             # zero padding
-            uncond = torch.cat([uncond, torch.zeros(uncond.shape[0], pfg_feature.shape[1], uncond.shape[2]).to(uncond.device,dtype=uncond.dtype)], dim=1)
+            uncond = torch.cat([uncond, torch.zeros(uncond.shape[0], pfg_feature.shape[1],
+                               uncond.shape[2]).to(uncond.device, dtype=uncond.dtype)], dim=1)
             encoder_hidden_state = torch.cat([cond, uncond], dim=0)
 
         self.scheduler.set_timesteps(num_inference_steps, device=self.device)
@@ -107,6 +113,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
 
         images = self.decode_latents(latents)
 
-        torch.manual_seed(torch.seed())
+        torch.set_rng_state(rng_state)
+        torch.cuda.set_rng_state(cuda_rng_state)
 
         return images

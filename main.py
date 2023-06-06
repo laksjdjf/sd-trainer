@@ -9,6 +9,8 @@ import time
 from omegaconf import OmegaConf
 import importlib
 
+from accelerate.utils import set_seed
+
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
@@ -26,6 +28,9 @@ def get_attr_from_config(config_text: str):
 
 
 def main(config):
+    if hasattr(config.train, "seed") and config.train.seed is not None:
+        set_seed(config.train.seed)
+
     lrs = config.train.lr.split(",")
     text_lr, unet_lr = float(lrs[0]), float(lrs[-1])  # 長さが1の場合同じ値になる
 
@@ -38,7 +43,11 @@ def main(config):
     vae = AutoencoderKL.from_pretrained(config.model.input_path, subfolder='vae')
     vae.enable_slicing()
     unet = UNet2DConditionModel.from_pretrained(config.model.input_path, subfolder='unet')
-
+    
+    if hasattr(config.train, "tome_ratio") and config.train.tome_ratio is not None:
+        import tomesd
+        tomesd.apply_patch(unet, ratio=config.train.tome_ratio)
+       
     if config.train.use_xformers:
         unet.set_use_memory_efficient_attention_xformers(True)
         print("xformersを適用しました。")
