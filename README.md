@@ -60,6 +60,7 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + UNetのup_blocksのみの学習（LoRAにも対応）
 + キャプションの先頭に文字列（"anime, "とか？）を追加するやつ
 + キャプションをランダムにドロップアウトする機能（大規模学習する場合以外には必要ないと思います。）
++ [tomesd](https://github.com/dbolya/tomesd)を使った学習
 
 実装してない機能
 + Dreambooth（データセットを継承すれば割と簡単に実装できそうな気がする）
@@ -76,10 +77,8 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + gradient accumulation
 + DeepFloyd IFへの対応（検証画像生成周りをもうちょっとなんとかしたい）
 + Lokr
-+ [tomesd](https://github.com/dbolya/tomesd)（実験中、実装は簡単）
 + [Min-SNR-weight](https://github.com/TiankaiHang/Min-SNR-Diffusion-Training)
 + [noise_offset](https://www.crosslabs.org/blog/diffusion-with-offset-noise)
-+ ControlNetのDiffusers to ckpt（実装してますが、かなり適当なコードなので公開していません。必要な人いる？）
 + VAEの学習（誰か損失関数教えて）
 
 
@@ -89,4 +88,6 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 何を参考にしたか忘れたくらい色々参考にした：https://github.com/kohya-ss/sd-scripts
 
 lohaやlocon:https://github.com/KohakuBlueleaf/LyCORIS
+
+Token Merging:https://github.com/dbolya/tomesd
 
