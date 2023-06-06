@@ -9,6 +9,8 @@ import time
 from omegaconf import OmegaConf
 import importlib
 
+from accelerate.utils import set_seed
+
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
@@ -26,6 +28,9 @@ def get_attr_from_config(config_text: str):
 
 
 def main(config):
+    if hasattr(config.train, "seed") and config.train.seed is not None:
+        set_seed(config.train.seed)
+
     lrs = config.train.lr.split(",")
     text_lr, unet_lr = float(lrs[0]), float(lrs[-1])  # 長さが1の場合同じ値になる
 
