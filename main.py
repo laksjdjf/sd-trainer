@@ -43,7 +43,11 @@ def main(config):
     vae = AutoencoderKL.from_pretrained(config.model.input_path, subfolder='vae')
     vae.enable_slicing()
     unet = UNet2DConditionModel.from_pretrained(config.model.input_path, subfolder='unet')
-
+    
+    if hasattr(config.train, "tome_ratio"):
+        import tomesd
+        tomesd.apply_patch(unet, ratio=config.train.tome_ratio)
+       
     if config.train.use_xformers:
         unet.set_use_memory_efficient_attention_xformers(True)
         print("xformersを適用しました。")
