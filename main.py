@@ -44,7 +44,7 @@ def main(config):
     vae.enable_slicing()
     unet = UNet2DConditionModel.from_pretrained(config.model.input_path, subfolder='unet')
     
-    if hasattr(config.train, "tome_ratio"):
+    if hasattr(config.train, "tome_ratio") and config.train.tome_ratio is not None:
         import tomesd
         tomesd.apply_patch(unet, ratio=config.train.tome_ratio)
        
