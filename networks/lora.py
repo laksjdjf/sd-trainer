@@ -5,8 +5,8 @@ import math
 import os
 from networks.loha import LohaModule
 
-UNET_TARGET_REPLACE_MODULE = [
-    "Transformer2DModel", "ResnetBlock2D", "Downsample2D", "Upsample2D"]
+UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
+UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
@@ -21,7 +21,6 @@ class LoRAModule(torch.nn.Module):
         self.lora_name = lora_name
         self.lora_dim = lora_dim
 
-        # とりまLinearだけ
         if org_module.__class__.__name__ == 'Linear':
             in_dim = org_module.in_features
             out_dim = org_module.out_features
@@ -94,15 +93,19 @@ class LoRANetwork(torch.nn.Module):
         # text encoderのloraを作る
         if train_encoder:
             self.text_encoder_loras = self.create_modules(
-                LORA_PREFIX_TEXT_ENCODER, text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE)
+                LORA_PREFIX_TEXT_ENCODER, text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, self.lora_dim)
             print(
                 f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
         else:
             self.text_encoder_loras = []
 
         # unetのloraを作る
-        self.unet_loras = self.create_modules(
-            LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE)
+        if self.lora_dim is not None:
+            self.unet_loras = self.create_modules(
+                LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_TRANSFORMER, self.lora_dim)
+        if self.conv_lora_dim is not None:
+            self.unet_loras += self.create_modules(
+                LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_CONV, self.conv_lora_dim)
         print(f"create LoRA for U-Net: {len(self.unet_loras)} modules.")
 
         # assertion 名前の被りがないか確認しているようだ
@@ -119,29 +122,17 @@ class LoRANetwork(torch.nn.Module):
         self.requires_grad_(True)
 
     # 見づらいのでメソッドにしちゃう
-    def create_modules(self, prefix, root_module: torch.nn.Module, target_replace_modules) -> list:
+    def create_modules(self, prefix, root_module: torch.nn.Module, target_replace_modules, rank) -> list:
         loras = []
         for name, module in root_module.named_modules():
             if module.__class__.__name__ in target_replace_modules and self.target_block in name:
                 for child_name, child_module in module.named_modules():
-                    
-                    is_linear = child_module.__class__.__name__ == "Linear"
-                    is_conv2d = child_module.__class__.__name__ == "Conv2d"
-                    is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
-                    
-                    if is_linear or is_conv2d_1x1:
+                    if child_module.__class__.__name__ in ["Linear","Conv2d"]:
                         lora_name = prefix + '.' + name + '.' + child_name
                         lora_name = lora_name.replace('.', '_')
                         lora = self.module(
-                            lora_name, child_module, self.multiplier, self.lora_dim, self.alpha)
+                            lora_name, child_module, self.multiplier, rank, self.alpha)
                         loras.append(lora)
-                    elif is_conv2d and self.conv_lora_dim is not None:
-                        lora_name = prefix + '.' + name + '.' + child_name
-                        lora_name = lora_name.replace('.', '_')
-                        lora = self.module(
-                            lora_name, child_module, self.multiplier, self.conv_lora_dim, self.alpha)
-                        loras.append(lora)
-
         return loras
 
     def prepare_optimizer_params(self, text_encoder_lr, unet_lr):
@@ -150,8 +141,7 @@ class LoRANetwork(torch.nn.Module):
 
         if self.text_encoder_loras:
             params = []
-            [params.extend(lora.parameters())
-             for lora in self.text_encoder_loras]  # loraの全パラメータ
+            [params.extend(lora.parameters()) for lora in self.text_encoder_loras]
             param_data = {'params': params}
             if text_encoder_lr is not None:
                 param_data['lr'] = text_encoder_lr
@@ -159,8 +149,7 @@ class LoRANetwork(torch.nn.Module):
 
         if self.unet_loras:
             params = []
-            [params.extend(lora.parameters())
-             for lora in self.unet_loras]  # loraの全パラメータ
+            [params.extend(lora.parameters()) for lora in self.unet_loras]
             param_data = {'params': params}
             if unet_lr is not None:
                 param_data['lr'] = unet_lr
@@ -183,20 +172,17 @@ class LoRANetwork(torch.nn.Module):
         else:
             torch.save(state_dict, file)
 
+    #重みの監視用だが使ってない
     def weight_log(self):
         state_dict = self.state_dict()
-
         means = {k: v.float().abs().mean() for k, v in state_dict.items()}
-
         target_keys = ["lora_up", "lora_down",
                        "down_blocks", "mid_block", "up_blocks",
                        "to_q", "to_k", "to_v", "to_out",
                        "ff_net_0", "ff_net_2",
                        "attn1", "attn2"
                        ]
-
         logs = {}
-
         for target_key in target_keys:
             logs[target_key] = torch.stack(
                 [means[key] for key in means.keys() if target_key in key]).mean().item()
