@@ -100,8 +100,9 @@ class LoRANetwork(torch.nn.Module):
             self.text_encoder_loras = []
 
         # unetのloraを作る
+        self.unet_loras = []
         if self.lora_dim is not None:
-            self.unet_loras = self.create_modules(
+            self.unet_loras += self.create_modules(
                 LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_TRANSFORMER, self.lora_dim)
         if self.conv_lora_dim is not None:
             self.unet_loras += self.create_modules(
