@@ -71,7 +71,6 @@ class BaseDataset(Dataset):
 
     # バッチの取り出し方を初期化するメソッド
     def init_batch_samples(self):
-        random.seed()
         self.batch_samples = []
         for key in self.bucket2file:
             random.shuffle(self.bucket2file[key])
