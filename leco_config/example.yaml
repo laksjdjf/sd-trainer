@@ -1,0 +1,38 @@
+model:
+    input_path: "../models/wd15-beta3"
+    output_name: "wd15b3_no_real.safetensors"
+
+leco:
+    target: "realistic, real life"
+    positive: null # same as target if null. 
+    total_steps: 500
+    save_steps: 50
+    resolution: 768
+    num_samples: 8 # increasing this value will improve speed but decrease accuracy.
+    sampling_step: 50 # sampling_step for generating latents.
+    generate_guidance_scale: 3 # guidance scale for generating latents.
+    target_guidance_scale: -1 # strength of enhance or erasing (erasing if negative number).
+    noise_scheduler: diffusers.DDIMScheduler
+        
+train:
+    lr: 1e-3
+    batch_size: 2
+    lr_scheduler: "constant"
+    amp: false
+    gradient_checkpointing: false
+    use_xformers: true
+    seed: 4545
+    tome_ratio: null
+    
+optimizer:
+    module: torch.optim.AdamW
+    #args:
+    
+network:
+    module: networks.lora.LoRANetwork
+    train: true
+    resume: null
+    args:
+        rank: 4 # "dynamic"で動的に決定
+        conv_rank: null # 指定するとloconになる
+        module: null # "loha"でlohaになる
