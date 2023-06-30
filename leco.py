@@ -22,6 +22,7 @@ def get_attr_from_config(config_text: str):
     return getattr(importlib.import_module(module), attr)
 
 # cfgの計算
+@torch.no_grad()
 def cfg(unet, latents, timesteps, uncond_cond, guidance_scale):
     if guidance_scale == 1:
         return unet(latents, timesteps, uncond_cond.chunk(2)[1]).sample
@@ -94,10 +95,11 @@ def main(config):
     unet.to(device, dtype=weight_dtype)
     network.to(device, dtype=torch.float32)
 
-    resolution = config.leco.resolution
+    resolution = config.leco.resolution // 8
     batch_size = config.train.batch_size
 
-    noise_scheduler = get_attr_from_config(config.leco.noise_scheduler)
+    noise_scheduler_class = get_attr_from_config(config.leco.noise_scheduler)
+    noise_scheduler = noise_scheduler_class.from_pretrained(config.model.input_path, subfolder='scheduler')
     sampling_step = config.leco.sampling_step
     num_samples = config.leco.num_samples
     noise_scheduler.set_timesteps(sampling_step, device=device)
@@ -135,33 +137,30 @@ def main(config):
 
     for step in range(total_steps):
         b_start = time.perf_counter()
-        with torch.autocast("cuda", enabled=not config.train.amp == False):
-            with torch.no_grad():
-                
-                # デノイズ途中の潜在変数を生成
+        with torch.autocast("cuda", enabled=not config.train.amp == False): 
+            # デノイズ途中の潜在変数を生成
+            with torch.autocast("cuda", enabled=True): #生成時は強制AMP 
                 if len(latents_and_times) == 0:
                     # x_T
                     latents = torch.randn(batch_size, 4, resolution, resolution, device=device, dtype=weight_dtype)
-                    
                     # tをnum_samples個サンプリング
-                    timestep_to = random.choice(range(50), num_samples)
+                    timestep_to = random.sample(range(sampling_step), num_samples)
                     timestep_to.sort()
+                    timedelta = random.choice(range(1000//sampling_step-1))
                     target_index = 0
-                    for i, t in enumerate(noise_scheduler.timesteps):
-                        latents_input = noise_scheduler.scale_model_input(latents, t)
-                        noise_pred = cfg(unet, latents_input, t, uncond_cond, generate_guidance_scale)
-                        latents = noise_scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+                    for i, t in tqdm(enumerate(noise_scheduler.timesteps[0:timestep_to[-1]+1])):
+                        timestep = t + timedelta
+                        latents_input = noise_scheduler.scale_model_input(latents, timestep)
+                        noise_pred = cfg(unet, latents_input, timestep, uncond_cond, generate_guidance_scale)
+                        latents = noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
                         if i == timestep_to[target_index]:
                             target_index += 1
-                            latents_and_times.append((latents, t))
-                            if target_index == len(timestep_to):
-                                break
+                            latents_and_times.append((latents, timestep))
 
-                latents, timesteps = latents_and_times.pop()
-                with network.no_apply():
-                    target = cfg(unet, latents, timesteps, uncond_cond, target_guidance_scale)
+            latents, timesteps = latents_and_times.pop()
+            with network.no_apply():
+                target = cfg(unet, latents, timesteps, uncond_cond, target_guidance_scale)
             noise_pred = unet(latents, timesteps, cond).sample # これだけ勾配が必要
-
         loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
         if loss_ema is None:
             loss_ema = loss.item()
@@ -184,7 +183,7 @@ def main(config):
         progress_bar.set_postfix(logs)
 
         if global_steps % save_steps == 0:
-            network.save_weights(config.model.output, torch.float16)
+            network.save_weights(config.model.output_name, torch.float16)
 
 if __name__ == "__main__":
     config = OmegaConf.load(sys.argv[1])
