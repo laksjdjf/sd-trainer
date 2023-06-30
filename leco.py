@@ -139,10 +139,10 @@ def main(config):
     progress_bar = tqdm(range(total_steps), desc="Total Steps", leave=False)
     loss_ema = None  # 訓練ロスの指数平均
 
-    latents_and_times = []
+    latents_and_times = {i:[] for i in range(len(dataloader))}
 
     for epoch in range(config.leco.epochs):
-        for batch in dataloader:
+        for idx, batch in enumerate(dataloader):
             b_start = time.perf_counter()
 
             target = batch["target"]
@@ -153,7 +153,7 @@ def main(config):
 
             # デノイズ途中の潜在変数を生成
             with torch.autocast("cuda", enabled=True): #生成時は強制AMP 
-                if len(latents_and_times) == 0:
+                if len(latents_and_times[idx]) == 0:
                     # x_T
                     latents = torch.randn(batch_size, 4, resolution, resolution, device=device, dtype=weight_dtype)
     
@@ -168,10 +168,10 @@ def main(config):
                         latents = noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
                         if i == timestep_to[target_index]:
                             target_index += 1
-                            latents_and_times.append((latents, timestep))
+                            latents_and_times[idx].append((latents, timestep))
                             
             with torch.autocast("cuda", enabled=not config.train.amp == False): 
-                latents, timesteps = latents_and_times.pop()
+                latents, timesteps = latents_and_times[idx].pop()
                 with network.no_apply():
                     noise_pred_positive = cfg(unet, latents, timesteps, torch.cat([positive, negative],dim=0), guidance_scale, neutral=neutral)
                 noise_pred = unet(latents, timesteps, target).sample
