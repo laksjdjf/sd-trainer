@@ -7,6 +7,7 @@ import time
 from omegaconf import OmegaConf
 import importlib
 import random
+import os
 
 from accelerate.utils import set_seed
 
@@ -123,45 +124,47 @@ def main(config):
     loss_ema = None  # 訓練ロスの指数平均
 
     # テキスト埋め込みの生成
-    text = [config.leco.target, ""]
+    text = [config.leco.target, config.leco.positive if config.leco.positive is not None else config.leco.target, ""]
     tokens = tokenizer(text, max_length=tokenizer.model_max_length, padding="max_length",
                         truncation=True, return_tensors='pt').input_ids.to(device)
     encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
-    cond, uncond = encoder_hidden_states.chunk(2)
-    cond = cond.repeat(batch_size, 1, 1)
+    target, positive, uncond = encoder_hidden_states.chunk(3)
+    target = target.repeat(batch_size, 1, 1)
+    positive = positive.repeat(batch_size, 1, 1)
     uncond = uncond.repeat(batch_size, 1, 1)
-    uncond_cond = torch.cat([uncond, cond], dim=0)
+    uncond_positive = torch.cat([uncond, positive], dim=0)
 
     latents_and_times = []
     loss_ema = None
 
     for step in range(total_steps):
         b_start = time.perf_counter()
+        # デノイズ途中の潜在変数を生成
+        with torch.autocast("cuda", enabled=True): #生成時は強制AMP 
+            if len(latents_and_times) == 0:
+                # x_T
+                latents = torch.randn(batch_size, 4, resolution, resolution, device=device, dtype=weight_dtype)
+ 
+                timestep_to = random.sample(range(sampling_step), num_samples) # tをnum_samples個サンプリング
+                timestep_to.sort()
+                timedelta = random.choice(range(1000//sampling_step-1)) # 全ステップ学習できるようちょっとずらす
+                target_index = 0
+                for i, t in tqdm(enumerate(noise_scheduler.timesteps[0:timestep_to[-1]+1])):
+                    timestep = t + timedelta
+                    latents_input = noise_scheduler.scale_model_input(latents, timestep)
+                    noise_pred = cfg(unet, latents_input, timestep, uncond_positive, generate_guidance_scale)
+                    latents = noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
+                    if i == timestep_to[target_index]:
+                        target_index += 1
+                        latents_and_times.append((latents, timestep))
+                        
         with torch.autocast("cuda", enabled=not config.train.amp == False): 
-            # デノイズ途中の潜在変数を生成
-            with torch.autocast("cuda", enabled=True): #生成時は強制AMP 
-                if len(latents_and_times) == 0:
-                    # x_T
-                    latents = torch.randn(batch_size, 4, resolution, resolution, device=device, dtype=weight_dtype)
-                    # tをnum_samples個サンプリング
-                    timestep_to = random.sample(range(sampling_step), num_samples)
-                    timestep_to.sort()
-                    timedelta = random.choice(range(1000//sampling_step-1))
-                    target_index = 0
-                    for i, t in tqdm(enumerate(noise_scheduler.timesteps[0:timestep_to[-1]+1])):
-                        timestep = t + timedelta
-                        latents_input = noise_scheduler.scale_model_input(latents, timestep)
-                        noise_pred = cfg(unet, latents_input, timestep, uncond_cond, generate_guidance_scale)
-                        latents = noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
-                        if i == timestep_to[target_index]:
-                            target_index += 1
-                            latents_and_times.append((latents, timestep))
-
             latents, timesteps = latents_and_times.pop()
             with network.no_apply():
-                target = cfg(unet, latents, timesteps, uncond_cond, target_guidance_scale)
-            noise_pred = unet(latents, timesteps, cond).sample # これだけ勾配が必要
-        loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
+                noise_pred_positive = cfg(unet, latents, timesteps, uncond_positive, target_guidance_scale)
+            noise_pred = unet(latents, timesteps, target).sample
+        loss = torch.nn.functional.mse_loss(noise_pred.float(), noise_pred_positive.float(), reduction="mean")
+        
         if loss_ema is None:
             loss_ema = loss.item()
         else:
@@ -183,7 +186,8 @@ def main(config):
         progress_bar.set_postfix(logs)
 
         if global_steps % save_steps == 0:
-            network.save_weights(config.model.output_name, torch.float16)
+            os.makedirs(os.path.join("trained","networks"), exist_ok=True)
+            network.save_weights(os.path.join("trained","networks",config.model.output_name), torch.float16)
 
 if __name__ == "__main__":
     config = OmegaConf.load(sys.argv[1])
