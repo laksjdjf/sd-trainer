@@ -10,6 +10,7 @@ targetのワードの意味をpositiveの意味に近づける（または遠ざ
 target_guidance_scaleを大きくすると、より近づくようになり、マイナスにすると遠ざかるようになります。
 
 例１：
+
 target: "real life"
 
 positive: null # nullにすると自動的にtargetと同じワードになります。
