@@ -3,7 +3,7 @@ platdev氏の[LECO](https://github.com/p1atdev/LECO)を参考に、色々変更�
 
 解説記事はこちらになります。https://zenn.dev/aics/articles/lora_for_erasing_concepts_from_diffusion_models
 
-originalのリポジトリはhttps://github.com/rohitgandikota/erasingになります。
+originalのリポジトリはhttps://github.com/rohitgandikota/erasing になります。
 
 # 簡単な説明
 targetのワードの意味をpositiveの意味に近づける（または遠ざける）ように学習します。
