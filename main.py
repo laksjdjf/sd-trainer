@@ -165,7 +165,7 @@ def main(config):
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in config.feature.step_range.split(",")]
 
     dataset_class = get_attr_from_config(config.dataset.module)
-    dataset = dataset_class(tokenizer, config.train.batch_size, config.feature.minibatch_repeat, **config.dataset.args)
+    dataset = dataset_class(tokenizer, config, **config.dataset.args)
 
     dataloader_class = get_attr_from_config(config.dataset.loader.module)
     dataloader = dataloader_class(
