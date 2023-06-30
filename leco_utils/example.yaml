@@ -16,7 +16,7 @@ train:
     lr: 1e-3
     batch_size: 2
     lr_scheduler: "constant"
-    amp: false
+    amp: "bfloat16"
     gradient_checkpointing: false
     use_xformers: true
     seed: 4545
