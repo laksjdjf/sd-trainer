@@ -16,6 +16,8 @@ from diffusers.optimization import get_scheduler
 
 from transformers import CLIPTextModel, CLIPTokenizer
 
+from leco_utils.leco_dataset import TextEmbeddingDataset
+
 # 文字列からモジュールを取得
 def get_attr_from_config(config_text: str):
     module = ".".join(config_text.split(".")[:-1])
@@ -24,14 +26,21 @@ def get_attr_from_config(config_text: str):
 
 # cfgの計算
 @torch.no_grad()
-def cfg(unet, latents, timesteps, uncond_cond, guidance_scale):
-    if guidance_scale == 1:
-        return unet(latents, timesteps, uncond_cond.chunk(2)[1]).sample
+def cfg(unet, latents, timesteps, positive_negative, guidance_scale, neutral=None):
+    if neutral is not None:
+        positive_negative_neutral = torch.cat([positive_negative, neutral], dim=0)
+        positive, negative, neutral = unet(latents, timesteps, positive_negative_neutral).sample.chunk(3)
+        return neutral + guidance_scale * (positive - negative)
+    elif guidance_scale == 1:
+        return unet(latents, timesteps, positive_negative.chunk(2)[1]).sample
     elif guidance_scale == 0:
-        return unet(latents, timesteps, uncond_cond.chunk(2)[0]).sample
+        return unet(latents, timesteps, positive_negative.chunk(2)[0]).sample
     else:
-        noise_pred_uncond, noise_pred_cond = unet(torch.cat([latents]*2), timesteps, uncond_cond).sample.chunk(2)
-        return noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+        positive, negative = unet(torch.cat([latents]*2), timesteps, positive_negative).sample.chunk(2)
+        return negative + guidance_scale * (positive - negative)
+    
+def collate_fn(batch):
+    return batch[0]
 
 def main(config):
     if hasattr(config.train, "seed") and config.train.seed is not None:
@@ -106,9 +115,16 @@ def main(config):
     noise_scheduler.set_timesteps(sampling_step, device=device)
 
     generate_guidance_scale = config.leco.generate_guidance_scale
-    target_guidance_scale = config.leco.target_guidance_scale
 
-    total_steps = config.leco.total_steps
+    # テキスト埋め込みの生成
+    print("プロンプトを処理します。")
+    prompts = OmegaConf.load(config.leco.prompts_file)
+    dataset = TextEmbeddingDataset(prompts, tokenizer, text_encoder, device, batch_size)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0, collate_fn=collate_fn)
+    
+    del text_encoder, tokenizer
+    
+    total_steps = config.leco.epochs * len(dataloader)
     save_steps = config.leco.save_steps
 
     lr_scheduler = get_scheduler(
@@ -123,71 +139,73 @@ def main(config):
     progress_bar = tqdm(range(total_steps), desc="Total Steps", leave=False)
     loss_ema = None  # 訓練ロスの指数平均
 
-    # テキスト埋め込みの生成
-    text = [config.leco.target, config.leco.positive if config.leco.positive is not None else config.leco.target, ""]
-    tokens = tokenizer(text, max_length=tokenizer.model_max_length, padding="max_length",
-                        truncation=True, return_tensors='pt').input_ids.to(device)
-    encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
-    target, positive, uncond = encoder_hidden_states.chunk(3)
-    target = target.repeat(batch_size, 1, 1)
-    positive = positive.repeat(batch_size, 1, 1)
-    uncond = uncond.repeat(batch_size, 1, 1)
-    uncond_positive = torch.cat([uncond, positive], dim=0)
-
     latents_and_times = []
     loss_ema = None
 
-    for step in range(total_steps):
-        b_start = time.perf_counter()
-        # デノイズ途中の潜在変数を生成
-        with torch.autocast("cuda", enabled=True): #生成時は強制AMP 
-            if len(latents_and_times) == 0:
-                # x_T
-                latents = torch.randn(batch_size, 4, resolution, resolution, device=device, dtype=weight_dtype)
- 
-                timestep_to = random.sample(range(sampling_step), num_samples) # tをnum_samples個サンプリング
-                timestep_to.sort()
-                timedelta = random.choice(range(1000//sampling_step-1)) # 全ステップ学習できるようちょっとずらす
-                target_index = 0
-                for i, t in tqdm(enumerate(noise_scheduler.timesteps[0:timestep_to[-1]+1])):
-                    timestep = t + timedelta
-                    latents_input = noise_scheduler.scale_model_input(latents, timestep)
-                    noise_pred = cfg(unet, latents_input, timestep, uncond_positive, generate_guidance_scale)
-                    latents = noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
-                    if i == timestep_to[target_index]:
-                        target_index += 1
-                        latents_and_times.append((latents, timestep))
-                        
-        with torch.autocast("cuda", enabled=not config.train.amp == False): 
-            latents, timesteps = latents_and_times.pop()
-            with network.no_apply():
-                noise_pred_positive = cfg(unet, latents, timesteps, uncond_positive, target_guidance_scale)
-            noise_pred = unet(latents, timesteps, target).sample
-        loss = torch.nn.functional.mse_loss(noise_pred.float(), noise_pred_positive.float(), reduction="mean")
-        
-        if loss_ema is None:
-            loss_ema = loss.item()
-        else:
-            loss_ema = loss_ema * 0.9 + loss.item() * 0.1 # 指数平均
+    for epoch in range(config.leco.epochs):
+        for batch in dataloader:
+            b_start = time.perf_counter()
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        lr_scheduler.step()
-        optimizer.zero_grad()
+            target = batch["target"]
+            positive = batch["positive"]
+            negative = batch["negative"]
+            neutral = batch["neutral"]
+            guidance_scale = batch["guidance_scale"]
 
-        global_steps += 1
+            # デノイズ途中の潜在変数を生成
+            with torch.autocast("cuda", enabled=True): #生成時は強制AMP 
+                if len(latents_and_times) == 0:
+                    # x_T
+                    latents = torch.randn(batch_size, 4, resolution, resolution, device=device, dtype=weight_dtype)
+    
+                    timestep_to = random.sample(range(sampling_step), num_samples) # tをnum_samples個サンプリング
+                    timestep_to.sort()
+                    timedelta = random.choice(range(1000//sampling_step-1)) # 全ステップ学習できるようちょっとずらす
+                    target_index = 0
+                    for i, t in tqdm(enumerate(noise_scheduler.timesteps[0:timestep_to[-1]+1])):
+                        timestep = t + timedelta
+                        latents_input = noise_scheduler.scale_model_input(latents, timestep)
+                        noise_pred = cfg(unet, latents_input, timestep, torch.cat([target, negative],dim=0), generate_guidance_scale)
+                        latents = noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
+                        if i == timestep_to[target_index]:
+                            target_index += 1
+                            latents_and_times.append((latents, timestep))
+                            
+            with torch.autocast("cuda", enabled=not config.train.amp == False): 
+                latents, timesteps = latents_and_times.pop()
+                with network.no_apply():
+                    noise_pred_positive = cfg(unet, latents, timesteps, torch.cat([positive, negative],dim=0), guidance_scale, neutral=neutral)
+                noise_pred = unet(latents, timesteps, target).sample
+            loss = torch.nn.functional.mse_loss(noise_pred.float(), noise_pred_positive.float(), reduction="mean")
+            
+            if loss_ema is None:
+                loss_ema = loss.item()
+            else:
+                loss_ema = loss_ema * 0.9 + loss.item() * 0.1 # 指数平均
 
-        b_end = time.perf_counter()
-        samples_per_second = batch_size / (b_end - b_start)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            lr_scheduler.step()
+            optimizer.zero_grad()
 
-        logs = {"loss": loss_ema, "samples_per_second": samples_per_second, "lr": lr_scheduler.get_last_lr()[0]}
-        progress_bar.update(1)
-        progress_bar.set_postfix(logs)
+            global_steps += 1
 
-        if global_steps % save_steps == 0:
-            os.makedirs(os.path.join("trained","networks"), exist_ok=True)
-            network.save_weights(os.path.join("trained","networks",config.model.output_name), torch.float16)
+            b_end = time.perf_counter()
+            samples_per_second = batch_size / (b_end - b_start)
+
+            logs = {"loss": loss_ema, "samples_per_second": samples_per_second, "lr": lr_scheduler.get_last_lr()[0]}
+            progress_bar.update(1)
+            progress_bar.set_postfix(logs)
+
+            if global_steps % save_steps == 0:
+                print("セーブしますぅ")
+                os.makedirs(os.path.join("trained","networks"), exist_ok=True)
+                network.save_weights(os.path.join("trained","networks",config.model.output_name), torch.float16)
+                
+    print("セーブしますぅ")
+    os.makedirs(os.path.join("trained","networks"), exist_ok=True)
+    network.save_weights(os.path.join("trained","networks",config.model.output_name), torch.float16)
 
 if __name__ == "__main__":
     config = OmegaConf.load(sys.argv[1])

@@ -3,15 +3,13 @@ model:
     output_name: "wd15b3_no_real.safetensors"
 
 leco:
-    target: "realistic, real life"
-    positive: null # same as target if null. 
-    total_steps: 500
-    save_steps: 50
-    resolution: 768
+    prompts_file: "leco_utils/config/prompts.yaml"
+    epochs: 500
+    save_steps: 100
+    resolution: 512
     num_samples: 8 # increasing this value will improve speed but decrease accuracy.
     sampling_step: 50 # sampling_step for generating latents.
-    generate_guidance_scale: 3 # guidance scale for generating latents.
-    target_guidance_scale: -1 # strength of enhance or erasing (erasing if negative number).
+    generate_guidance_scale: 3
     noise_scheduler: diffusers.DDIMScheduler
         
 train:
