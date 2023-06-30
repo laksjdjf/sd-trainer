@@ -1,5 +1,5 @@
 # LECO
-platdev氏の[https://github.com/p1atdev/LECO](LECO)を参考に、色々変更を加えて実装したものになります。
+platdev氏の[LECO](https://github.com/p1atdev/LECO)を参考に、色々変更を加えて実装したものになります。
 
 解説記事はこちらになります。https://zenn.dev/aics/articles/lora_for_erasing_concepts_from_diffusion_models
 
