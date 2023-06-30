@@ -64,13 +64,13 @@ class BaseDataset(Dataset):
         captions = self.get_captions(samples, self.caption)
         batch["captions"] = captions * self.minibatch_repeat
 
-        if self.mask is not None:
+        if self.mask:
             masks = self.get_masks(samples, self.mask if isinstance(self.mask, str) else "mask")
             batch["mask"] = torch.cat([masks]*self.minibatch_repeat, dim=0)
-        if self.pfg is not None:
+        if self.pfg:
             pfg = self.get_pfg(samples, self.pfg if isinstance(self.pfg, str) else "pfg")
             batch["pfg"] = torch.cat([pfg]*self.minibatch_repeat, dim=0)
-        if self.control is not None:
+        if self.control:
             control = self.get_control(samples, self.control if isinstance(self.control, str) else "control")
             batch["control"] = torch.cat([control]*self.minibatch_repeat, dim=0)
 
