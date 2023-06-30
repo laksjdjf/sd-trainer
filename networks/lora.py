@@ -4,6 +4,7 @@ import torch
 import math
 import os
 from networks.loha import LohaModule
+import contextlib
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
@@ -20,6 +21,7 @@ class LoRAModule(torch.nn.Module):
         super().__init__()
         self.lora_name = lora_name
         self.lora_dim = lora_dim
+        self.apply = True
 
         if org_module.__class__.__name__ == 'Linear':
             in_dim = org_module.in_features
@@ -72,7 +74,10 @@ class LoRAModule(torch.nn.Module):
         del self.org_module
 
     def forward(self, x):
-        return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+        if self.apply:
+            return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+        else:
+            return self.org_forward(x) 
 
 
 
@@ -188,3 +193,11 @@ class LoRANetwork(torch.nn.Module):
             logs[target_key] = torch.stack(
                 [means[key] for key in means.keys() if target_key in key]).mean().item()
         return logs
+    
+    @contextlib.contextmanager
+    def no_apply(self):
+        for lora in self.text_encoder_loras + self.unet_loras:
+            lora.apply = False
+        yield
+        for lora in self.text_encoder_loras + self.unet_loras:
+            lora.apply = True
