@@ -29,7 +29,7 @@ def get_attr_from_config(config_text: str):
 def cfg(unet, latents, timesteps, positive_negative, guidance_scale, neutral=None):
     if neutral is not None:
         positive_negative_neutral = torch.cat([positive_negative, neutral], dim=0)
-        positive, negative, neutral = unet(torch.cat([latents]*3, timesteps, positive_negative_neutral).sample.chunk(3)
+        positive, negative, neutral = unet(torch.cat([latents]*3), timesteps, positive_negative_neutral).sample.chunk(3)
         return neutral + guidance_scale * (positive - negative)
     elif guidance_scale == 1:
         return unet(latents, timesteps, positive_negative.chunk(2)[0]).sample
