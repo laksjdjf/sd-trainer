@@ -32,9 +32,9 @@ def cfg(unet, latents, timesteps, positive_negative, guidance_scale, neutral=Non
         positive, negative, neutral = unet(latents, timesteps, positive_negative_neutral).sample.chunk(3)
         return neutral + guidance_scale * (positive - negative)
     elif guidance_scale == 1:
-        return unet(latents, timesteps, positive_negative.chunk(2)[1]).sample
-    elif guidance_scale == 0:
         return unet(latents, timesteps, positive_negative.chunk(2)[0]).sample
+    elif guidance_scale == 0:
+        return unet(latents, timesteps, positive_negative.chunk(2)[1]).sample
     else:
         positive, negative = unet(torch.cat([latents]*2), timesteps, positive_negative).sample.chunk(2)
         return negative + guidance_scale * (positive - negative)
