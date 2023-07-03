@@ -2,19 +2,17 @@
 
 import sys
 import torch
-import os
 from tqdm import tqdm
-import numpy as np
 import time
 from omegaconf import OmegaConf
 import importlib
 
 from accelerate.utils import set_seed
 
-from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
-from transformers import CLIPTextModel, CLIPTokenizer
+from utils.model import load_model
 
 # データローダー用の関数
 def collate_fn(x):
@@ -38,11 +36,9 @@ def main(config):
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
     print("weight_dtype:", weight_dtype)
 
-    tokenizer = CLIPTokenizer.from_pretrained(config.model.input_path, subfolder='tokenizer')
-    text_encoder = CLIPTextModel.from_pretrained(config.model.input_path, subfolder='text_encoder')
-    vae = AutoencoderKL.from_pretrained(config.model.input_path, subfolder='vae')
+    tokenizer, text_encoder, vae, unet, scheduler = load_model(config.model.input_path)
+    noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
-    unet = UNet2DConditionModel.from_pretrained(config.model.input_path, subfolder='unet')
     
     if hasattr(config.train, "tome_ratio") and config.train.tome_ratio is not None:
         import tomesd
@@ -159,13 +155,11 @@ def main(config):
     if controlnet is not None:
         controlnet.to(device, dtype=torch.float32 if config.controlnet.train else weight_dtype)
 
-    noise_scheduler = DDPMScheduler.from_pretrained(config.model.input_path, subfolder='scheduler')
-
     # sampling stepの範囲を指定
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in config.feature.step_range.split(",")]
 
     dataset_class = get_attr_from_config(config.dataset.module)
-    dataset = dataset_class(tokenizer, config.train.batch_size, config.feature.minibatch_repeat, **config.dataset.args)
+    dataset = dataset_class(config, tokenizer, **config.dataset.args)
 
     dataloader_class = get_attr_from_config(config.dataset.loader.module)
     dataloader = dataloader_class(

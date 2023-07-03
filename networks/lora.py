@@ -4,6 +4,7 @@ import torch
 import math
 import os
 from networks.loha import LohaModule
+import contextlib
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
@@ -72,7 +73,12 @@ class LoRAModule(torch.nn.Module):
         del self.org_module
 
     def forward(self, x):
-        return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+        if self.multiplier == 0.0:
+            return self.org_forward(x)
+        else:
+            return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+        
+             
 
 
 
@@ -158,7 +164,7 @@ class LoRANetwork(torch.nn.Module):
 
         return all_params
 
-    def save_weights(self, file, dtype=None):
+    def save_weights(self, file, dtype=torch.float16):
         state_dict = self.state_dict()
 
         if dtype is not None:
@@ -166,6 +172,9 @@ class LoRANetwork(torch.nn.Module):
                 v = state_dict[key]
                 v = v.detach().clone().to("cpu").to(dtype)
                 state_dict[key] = v
+
+        if os.path.splitext(file)[1] == '':
+            file += '.safetensors'
 
         if os.path.splitext(file)[1] == '.safetensors':
             from safetensors.torch import save_file
@@ -188,3 +197,11 @@ class LoRANetwork(torch.nn.Module):
             logs[target_key] = torch.stack(
                 [means[key] for key in means.keys() if target_key in key]).mean().item()
         return logs
+    
+    @contextlib.contextmanager
+    def set_temporary_multiplier(self, multiplier):
+        for lora in self.text_encoder_loras + self.unet_loras:
+            lora.multiplier = multiplier
+        yield
+        for lora in self.text_encoder_loras + self.unet_loras:
+            lora.multiplier = 1.0

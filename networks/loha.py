@@ -189,6 +189,8 @@ class LohaModule(nn.Module):
 
     @torch.enable_grad()
     def forward(self, x):
+        if self.multiplier == 0.0:
+            return self.org_module[0](x)
         # print(torch.mean(torch.abs(self.orig_w1a.to(x.device) - self.hada_w1_a)), end='\r')
         if self.cp:
             weight = make_weight_cp(
