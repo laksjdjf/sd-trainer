@@ -5,7 +5,9 @@ platdev氏の[LECO](https://github.com/p1atdev/LECO)を参考に、色々変更�
 
 originalのリポジトリはhttps://github.com/rohitgandikota/erasing になります。
 
-# 簡単な説明
+# 設定ファイルについて
+[leco_utils/config/example.yaml](https://github.com/laksjdjf/sd-trainer/blob/dev/leco_utils/config/example.yaml)に例があります。モデルはdiffusers形式でもckpt or safetensorsでもおっけーです。
+
 prompts.yamlの文法
 ```
 target: "意味を変えたい対象"
@@ -43,6 +45,10 @@ guidance_scale: 3
 guidance scaleがマイナス（つまりpositiveから遠ざけたいとき）はネガティブプロンプトに近づくよう学習してしまうので非推奨です。
 neutralはとりあえず考えなくていいんじゃないかな。
 
+訓練は以下みたいな感じでできます。
+```
+pytbon leco.py leco_utils/config/example/yaml
+```
 
 # 変更点
 
