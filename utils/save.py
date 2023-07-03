@@ -88,7 +88,7 @@ class Save:
                 pipeline.save_pretrained(os.path.join("trained/models", filename))
 
             if network is not None and self.config.network.train:
-                network.save_weights(os.path.join("trained/networks", filename + '.pt'))
+                network.save_weights(os.path.join("trained/networks", filename))
 
             if controlnet is not None and self.config.controlnet.train:
                 controlnet.save_pretrained(os.path.join("trained/controlnet", filename))
@@ -128,6 +128,7 @@ class Save:
                         images.append(wandb.Image(image, caption=prompt))
                     else:
                         image.save(os.path.join(self.image_logs, f'image_log_{str(steps).zfill(6)}_{i}.png'))
+                    
                     
             if self.wandb:
                 self.run.log({'images': images}, step=steps)

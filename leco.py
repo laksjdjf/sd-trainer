@@ -11,12 +11,14 @@ import os
 
 from accelerate.utils import set_seed
 
-from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+from diffusers import UNet2DConditionModel, StableDiffusionPipeline
 from diffusers.optimization import get_scheduler
 
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from leco_utils.leco_dataset import TextEmbeddingDataset
+
+from utils.model import load_model
 
 # 文字列からモジュールを取得
 def get_attr_from_config(config_text: str):
@@ -52,9 +54,9 @@ def main(config):
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
     print("weight_dtype:", weight_dtype)
 
-    tokenizer = CLIPTokenizer.from_pretrained(config.model.input_path, subfolder='tokenizer')
-    text_encoder = CLIPTextModel.from_pretrained(config.model.input_path, subfolder='text_encoder')
-    unet = UNet2DConditionModel.from_pretrained(config.model.input_path, subfolder='unet')
+    tokenizer, text_encoder, _, unet, scheduler = load_model(config)
+    noise_scheduler_class = get_attr_from_config(config.leco.noise_scheduler)
+    noise_scheduler = noise_scheduler_class.from_config(scheduler.config)
     
     if hasattr(config.train, "tome_ratio") and config.train.tome_ratio is not None:
         import tomesd
@@ -108,8 +110,6 @@ def main(config):
     resolution = config.leco.resolution // 8
     batch_size = config.train.batch_size
 
-    noise_scheduler_class = get_attr_from_config(config.leco.noise_scheduler)
-    noise_scheduler = noise_scheduler_class.from_pretrained(config.model.input_path, subfolder='scheduler')
     sampling_step = config.leco.sampling_step
     num_samples = config.leco.num_samples
     noise_scheduler.set_timesteps(sampling_step, device=device)
@@ -172,7 +172,7 @@ def main(config):
                             
             with torch.autocast("cuda", enabled=not config.train.amp == False): 
                 latents, timesteps = latents_and_times[idx].pop()
-                with network.no_apply():
+                with network.set_temporary_multiplier(0.0):
                     noise_pred_positive = cfg(unet, latents, timesteps, torch.cat([positive, negative],dim=0), guidance_scale, neutral=neutral)
                 noise_pred = unet(latents, timesteps, target).sample
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise_pred_positive.float(), reduction="mean")
@@ -197,7 +197,7 @@ def main(config):
             progress_bar.update(1)
             progress_bar.set_postfix(logs)
 
-            if global_steps % save_steps == 0:
+            if global_steps % save_steps == 0 and not global_steps == total_steps:
                 print("セーブしますぅ")
                 os.makedirs(os.path.join("trained","networks"), exist_ok=True)
                 network.save_weights(os.path.join("trained","networks",config.model.output_name), torch.float16)
