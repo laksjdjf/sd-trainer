@@ -99,7 +99,6 @@ class LohaModule(nn.Module):
         super().__init__()
         self.lora_name = lora_name
         self.cp = False
-        self.apply = True
 
         self.shape = org_module.weight.shape
         if org_module.__class__.__name__ == 'Conv2d':
@@ -190,7 +189,7 @@ class LohaModule(nn.Module):
 
     @torch.enable_grad()
     def forward(self, x):
-        if not self.apply:
+        if self.multiplier == 0.0:
             return self.org_module[0](x)
         # print(torch.mean(torch.abs(self.orig_w1a.to(x.device) - self.hada_w1_a)), end='\r')
         if self.cp:
