@@ -51,6 +51,7 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + Maskを使った学習
 + ControlNetの学習
 + PFGの学習
++ LECOの学習
 + wandbによるログチェック
 + 設定ファイルからOptimizerを自由に選べる
 + データセット、セーブ機能の拡張性（クラスの定義のみで使えるはず）
@@ -61,6 +62,7 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + キャプションの先頭に文字列（"anime, "とか？）を追加するやつ
 + キャプションをランダムにドロップアウトする機能（大規模学習する場合以外には必要ないと思います。）
 + [tomesd](https://github.com/dbolya/tomesd)を使った学習
++ ckpt, safetensors(compvis？)モデルの対応
 
 実装してない機能
 + Dreambooth（データセットを継承すれば割と簡単に実装できそうな気がする）
@@ -71,7 +73,6 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + トークン長の拡張（個人的に学習段階でトークン長の拡張を行うのはよくないと思うのですがどうでしょうか。）
 
 実装したい機能
-+ ckpt, safetensors(compvis？)モデルの対応
 + LoRA等のsafetensorsによる保存
 + 複数GPU対応
 + gradient accumulation
@@ -90,4 +91,6 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 lohaやlocon:https://github.com/KohakuBlueleaf/LyCORIS
 
 Token Merging:https://github.com/dbolya/tomesd
+
+LECO:https://github.com/p1atdev/LECO
 
