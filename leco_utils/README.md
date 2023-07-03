@@ -47,7 +47,7 @@ neutralはとりあえず考えなくていいんじゃないかな。
 
 訓練は以下みたいな感じでできます。
 ```
-pytbon leco.py leco_utils/config/example/yaml
+pytbon leco.py leco_utils/config/example.yaml
 ```
 
 # 変更点
