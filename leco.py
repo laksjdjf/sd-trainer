@@ -54,7 +54,7 @@ def main(config):
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
     print("weight_dtype:", weight_dtype)
 
-    tokenizer, text_encoder, _, unet, scheduler = load_model(config)
+    tokenizer, text_encoder, _, unet, scheduler = load_model(config.model.input_path)
     noise_scheduler_class = get_attr_from_config(config.leco.noise_scheduler)
     noise_scheduler = noise_scheduler_class.from_config(scheduler.config)
     
