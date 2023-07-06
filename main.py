@@ -36,10 +36,16 @@ def main(config):
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
     print("weight_dtype:", weight_dtype)
 
-    tokenizer, text_encoder, vae, unet, scheduler = load_model(config.model.input_path)
+    tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler = load_model(config.model.input_path, config.model.sdxl)
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
+    latent_scale = 0.18215 if not config.model.sdxl else 0.13025
     
+    if hasattr(config.model, "clip_skip"):
+        clip_skip = config.model.clip_skip or -1 # nullなら-1
+    else:
+        clip_skip = -1
+        
     if hasattr(config.train, "tome_ratio") and config.train.tome_ratio is not None:
         import tomesd
         tomesd.apply_patch(unet, ratio=config.train.tome_ratio)
@@ -146,6 +152,8 @@ def main(config):
 
     # 型の指定とGPUへの移動
     text_encoder.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
+    if text_encoder_2 is not None:
+        text_encoder_2.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
     vae.to(device, dtype=weight_dtype)
     unet.to(device, dtype=torch.float32 if config.train.train_unet else weight_dtype)
     if network is not None:
@@ -191,13 +199,22 @@ def main(config):
 
             tokens = tokenizer(batch["captions"], max_length=tokenizer.model_max_length, padding="max_length",
                                truncation=True, return_tensors='pt').input_ids.to(device)
-            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
+            if tokenizer_2 is not None:
+                tokens_2 = tokenizer_2(batch["captions"], max_length=tokenizer_2.model_max_length, padding="max_length",
+                               truncation=True, return_tensors='pt').input_ids.to(device)
+            
+            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip]
+            if text_encoder_2 is not None:
+                encoder_output_2 = text_encoder_2(tokens_2, output_hidden_states=True)
+                encoder_hidden_states_2 = encoder_output_2.hidden_states[clip_skip]
+                projection = encoder_output_2[0]
+                encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=2)
 
             if 'latents' in batch: # 事前に計算した潜在変数を使う場合
-                latents = batch['latents'].to(device) * 0.18215
+                latents = batch['latents'].to(device) * latent_scale
             else:
                 latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * 0.18215
-
+            
             if "pfg" in batch: 
                 pfg_inputs = batch["pfg"].to(device)
                 with torch.autocast("cuda", enabled=not config.train.amp == False):
@@ -207,6 +224,10 @@ def main(config):
             noise = torch.randn_like(latents)
             bsz = latents.shape[0]
 
+            if config.model.sdxl:
+                size_condition = (latents.shape[2]*8, latents.shape[3]*8, 0, 0, latents.shape[2]*8, latents.shape[3]*8)
+                size_condition = torch.tensor(size_condition, dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
+                added_cond_kwargs = {"text_embeds": projection, "time_ids": size_condition}
             # step_rangeの範囲内でランダムにstepを選択
             timesteps = torch.randint(step_range[0], step_range[1], (bsz,), device=latents.device)
             timesteps = timesteps.long()
@@ -226,11 +247,12 @@ def main(config):
                     down_block_res_samples, mid_block_res_sample = None, None
 
                 noise_pred = unet(noisy_latents,
-                                  timesteps,
-                                  encoder_hidden_states,
-                                  down_block_additional_residuals=down_block_res_samples,
-                                  mid_block_additional_residual=mid_block_res_sample,
-                                  ).sample
+                                timesteps,
+                                encoder_hidden_states,
+                                down_block_additional_residuals=down_block_res_samples,
+                                mid_block_additional_residual=mid_block_res_sample,
+                                added_cond_kwargs=added_cond_kwargs,
+                            ).sample
 
             if config.model.v_prediction:
                 noise = noise_scheduler.get_velocity(latents, noise, timesteps)
@@ -264,7 +286,7 @@ def main(config):
             progress_bar.set_postfix(logs)
 
             final = total_steps == global_steps # 最後のステップかどうか
-            save(global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, noise_scheduler, network, pfg, controlnet)
+            save(global_steps, final, logs, batch, text_encoder, text_encoder_2, unet, vae, tokenizer, tokenizer_2, noise_scheduler, network, pfg, controlnet)
             if final:
                 return
 
