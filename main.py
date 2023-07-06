@@ -217,7 +217,7 @@ def main(config):
             
             if "pfg" in batch: 
                 pfg_inputs = batch["pfg"].to(device)
-                with torch.autocast("cuda", enabled=not config.train.amp == False):
+                with torch.autocast("cuda", enabled=not config.train.amp == False, dtype=weight_dtype):
                     pfg_feature = pfg(pfg_inputs).to(dtype=encoder_hidden_states.dtype)
                 encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
 
@@ -228,13 +228,16 @@ def main(config):
                 size_condition = (latents.shape[2]*8, latents.shape[3]*8, 0, 0, latents.shape[2]*8, latents.shape[3]*8)
                 size_condition = torch.tensor(size_condition, dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
                 added_cond_kwargs = {"text_embeds": projection, "time_ids": size_condition}
+            else:
+                added_cond_kwargs = None
+                
             # step_rangeの範囲内でランダムにstepを選択
             timesteps = torch.randint(step_range[0], step_range[1], (bsz,), device=latents.device)
             timesteps = timesteps.long()
 
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            with torch.autocast("cuda", enabled=not config.train.amp == False):
+            with torch.autocast("cuda", enabled=not config.train.amp == False, dtype=weight_dtype):
                 if controlnet is not None:
                     down_block_res_samples, mid_block_res_sample = controlnet(
                         noisy_latents,
@@ -246,13 +249,14 @@ def main(config):
                 else:
                     down_block_res_samples, mid_block_res_sample = None, None
 
-                noise_pred = unet(noisy_latents,
-                                timesteps,
-                                encoder_hidden_states,
-                                down_block_additional_residuals=down_block_res_samples,
-                                mid_block_additional_residual=mid_block_res_sample,
-                                added_cond_kwargs=added_cond_kwargs,
-                            ).sample
+                noise_pred = unet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states,
+                    down_block_additional_residuals=down_block_res_samples,
+                    mid_block_additional_residual=mid_block_res_sample,
+                    added_cond_kwargs=added_cond_kwargs,
+                ).sample
 
             if config.model.v_prediction:
                 noise = noise_scheduler.get_velocity(latents, noise, timesteps)
