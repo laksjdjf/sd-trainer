@@ -63,6 +63,8 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + キャプションをランダムにドロップアウトする機能（大規模学習する場合以外には必要ないと思います。）
 + [tomesd](https://github.com/dbolya/tomesd)を使った学習
 + ckpt, safetensors(compvis？)モデルの対応
++ [noise_offset](https://www.crosslabs.org/blog/diffusion-with-offset-noise)
++ sdxl対応
 
 実装してない機能
 + Dreambooth（データセットを継承すれば割と簡単に実装できそうな気がする）
@@ -73,13 +75,10 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + トークン長の拡張（個人的に学習段階でトークン長の拡張を行うのはよくないと思うのですがどうでしょうか。）
 
 実装したい機能
-+ LoRA等のsafetensorsによる保存
 + 複数GPU対応
 + gradient accumulation
-+ DeepFloyd IFへの対応（検証画像生成周りをもうちょっとなんとかしたい）
 + Lokr
 + [Min-SNR-weight](https://github.com/TiankaiHang/Min-SNR-Diffusion-Training)
-+ [noise_offset](https://www.crosslabs.org/blog/diffusion-with-offset-noise)
 + VAEの学習（誰か損失関数教えて）
 
 
