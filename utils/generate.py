@@ -133,7 +133,7 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
         return encoder_hidden_state, projection
 
     def decode_latents(self, latents):
-        latents = 1 / 0.18215 * latents
+        latents = 1 / 0.13025 * latents
         images = []
         with torch.no_grad():
             # VRAM節約のためにバッチサイズ1でループ
@@ -197,8 +197,9 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
         latents = torch.randn((len(prompts), 4, height // 8, width // 8), device=self.device)
         latents = latents * self.scheduler.init_noise_sigma
 
-        size_condition = (latents.shape[2]*8, latents.shape[3]*8, 0, 0, latents.shape[2]*8, latents.shape[3]*8)
-        size_condition = torch.tensor(size_condition, dtype=latents.dtype, device=latents.device).repeat(latents.shape[0]*2, 1)
+        size_condition = list((height, width) + (0, 0) + (height, width))
+        size_condition = torch.tensor([size_condition], dtype=latents.dtype, device=latents.device)
+        size_condition = torch.cat([size_condition]*2).repeat(latents.shape[0], 1) # なにやってだこれ
         added_cond_kwargs = {"text_embeds": projection, "time_ids": size_condition}
 
         progress_bar = tqdm(range(num_inference_steps), desc="Total Steps", leave=False)

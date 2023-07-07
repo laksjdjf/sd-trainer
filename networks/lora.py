@@ -181,6 +181,17 @@ class LoRANetwork(torch.nn.Module):
             save_file(state_dict, file)
         else:
             torch.save(state_dict, file)
+            
+    def load_weights(self, file):
+        if os.path.splitext(file)[1] == ".safetensors":
+            from safetensors.torch import load_file
+
+            weights_sd = load_file(file)
+        else:
+            weights_sd = torch.load(file, map_location="cpu")
+
+        info = self.load_state_dict(weights_sd, False)
+        return info
 
     #重みの監視用だが使ってない
     def weight_log(self):

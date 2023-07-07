@@ -24,7 +24,6 @@ def get_attr_from_config(config_text: str):
     attr = config_text.split(".")[-1]
     return getattr(importlib.import_module(module), attr)
 
-
 def main(config):
     if hasattr(config.train, "seed") and config.train.seed is not None:
         set_seed(config.train.seed)
@@ -63,7 +62,7 @@ def main(config):
         network_class = get_attr_from_config(config.network.module)
         network = network_class(text_encoder, unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
         if config.network.resume is not None:
-            network.load_state_dict(torch.load(config.network.resume))
+            network.load_weights(config.network.resume)
         network.train(config.network.train)
         network.requires_grad_(config.network.train)
         if config.network.train:
@@ -225,8 +224,8 @@ def main(config):
             bsz = latents.shape[0]
 
             if config.model.sdxl:
-                size_condition = (latents.shape[2]*8, latents.shape[3]*8, 0, 0, latents.shape[2]*8, latents.shape[3]*8)
-                size_condition = torch.tensor(size_condition, dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
+                size_condition = list((latents.shape[2]*8, latents.shape[3]*8) + (0, 0) + (latents.shape[2]*8, latents.shape[3]*8))
+                size_condition = torch.tensor([size_condition], dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
                 added_cond_kwargs = {"text_embeds": projection, "time_ids": size_condition}
             else:
                 added_cond_kwargs = None
