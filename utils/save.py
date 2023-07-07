@@ -72,7 +72,7 @@ class Save:
             self.run.log(logs, step=steps)
         if steps % self.save_n_steps == 0 or final:
             print(f'チェックポイントをセーブするよ!')
-            if self.config.model.sdxl:
+            if text_encoder_2 is not None:
                 pipeline = WrapStableDiffusionXLPipeline(
                     text_encoder=text_encoder,
                     text_encoder_2=text_encoder_2,

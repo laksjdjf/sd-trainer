@@ -24,37 +24,46 @@ def get_attr_from_config(config_text: str):
     attr = config_text.split(".")[-1]
     return getattr(importlib.import_module(module), attr)
 
+def default(dic, key, default_value):
+    if hasattr(dic, key) and getattr(dic, key) is not None:
+        return getattr(dic, key)
+    else:
+        return default_value
+
 def main(config):
-    if hasattr(config.train, "seed") and config.train.seed is not None:
-        set_seed(config.train.seed)
+    seed = default(config.train, "seed", None)
+    if seed is not None:
+        set_seed(seed)
+
+    sdxl = default(config.model, "sdxl", False)
 
     lrs = config.train.lr.split(",")
     text_lr, unet_lr = float(lrs[0]), float(lrs[-1])  # 長さが1の場合同じ値になる
+    print("text_lr:", text_lr, "unet_lr:", unet_lr)
 
     device = torch.device('cuda')
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
+    amp = not config.train.amp == False
     print("weight_dtype:", weight_dtype)
 
-    tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler = load_model(config.model.input_path, config.model.sdxl)
+    tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler = load_model(config.model.input_path, sdxl)
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
-    latent_scale = 0.18215 if not config.model.sdxl else 0.13025
+    latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
     
-    if hasattr(config.model, "clip_skip"):
-        clip_skip = config.model.clip_skip or -1 # nullなら-1
-    else:
-        clip_skip = -1
+    clip_skip = default(config.model, "ckip_skip", -1)
         
-    if hasattr(config.train, "tome_ratio") and config.train.tome_ratio is not None:
+    if default(config.train, "tome_ratio", False):
         import tomesd
         tomesd.apply_patch(unet, ratio=config.train.tome_ratio)
+        print(f"tomeを適用しました。ratio={config.train.tome_ratio}")
        
     if config.train.use_xformers:
         unet.set_use_memory_efficient_attention_xformers(True)
         print("xformersを適用しました。")
 
     # ampの設定、config.train.ampがFalseなら無効
-    scaler = torch.cuda.amp.GradScaler(enabled=not config.train.amp == False)
+    scaler = torch.cuda.amp.GradScaler(enabled=amp)
 
     params = []  # optimizerに入れるパラメータを格納するリスト
     # networkの準備
@@ -92,6 +101,8 @@ def main(config):
         else:
             params.append({'params': unet.parameters(), 'lr': unet_lr})
             if config.train.train_encoder:
+                if sdxl:
+                    raise NotImplementedError("SDXLの場合はtext_encoderの学習はできません。")
                 params.append({'params': text_encoder.parameters(), 'lr': text_lr})
 
     # controlnetの準備
@@ -223,7 +234,7 @@ def main(config):
             noise = torch.randn_like(latents)
             bsz = latents.shape[0]
 
-            if config.model.sdxl:
+            if sdxl:
                 size_condition = list((latents.shape[2]*8, latents.shape[3]*8) + (0, 0) + (latents.shape[2]*8, latents.shape[3]*8))
                 size_condition = torch.tensor([size_condition], dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
                 added_cond_kwargs = {"text_embeds": projection, "time_ids": size_condition}
