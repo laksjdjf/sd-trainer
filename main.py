@@ -232,6 +232,11 @@ def main(config):
                 encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
 
             noise = torch.randn_like(latents)
+            
+            if default(config.train,"noise_offset", False):
+                noise_offset = config.train.noise_offset * torch.randn(latents.shape[0], latents.shape[1], 1, 1)
+                noise = noise + noise_offset.to(noise.device, dtype=noise.dtype)
+
             bsz = latents.shape[0]
 
             if sdxl:
