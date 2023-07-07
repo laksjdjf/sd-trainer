@@ -51,7 +51,7 @@ def main(config):
     vae.enable_slicing()
     latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
     
-    clip_skip = default(config.model, "ckip_skip", -1)
+    clip_skip = default(config.model, "clip_skip", -1)
         
     if default(config.train, "tome_ratio", False):
         import tomesd
@@ -247,7 +247,7 @@ def main(config):
 
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            with torch.autocast("cuda", enabled=not config.train.amp == False, dtype=weight_dtype):
+            with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                 if controlnet is not None:
                     down_block_res_samples, mid_block_res_sample = controlnet(
                         noisy_latents,
