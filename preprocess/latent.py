@@ -15,7 +15,7 @@ parser.add_argument('--start', '-s', required=False, default=0, type=int)
 parser.add_argument('--end', '-e', required=False, type=int)
 parser.add_argument('--model', '-m', required=True, type=str)
 parser.add_argument('--batch_size', '-b', required=False, default=10, type=int)
-parser.add_argumemt('--dtype', '-t', required=False, default="fp32", type=str, choices=['fp32', 'fp16', 'bf16'])
+parser.add_argument('--dtype', '-t', required=False, default="fp32", type=str, choices=['fp32', 'fp16', 'bf16'])
 args = parser.parse_args()
 
 
@@ -64,7 +64,7 @@ def main():
 def main_batch():
     vae = AutoencoderKL.from_pretrained(args.model, subfolder="vae")
     vae.eval()
-    vae.to("cuda", dtype=torch.dtype)
+    vae.to("cuda", dtype=dtype)
 
     to_tensor_norm = transforms.Compose(
         [
