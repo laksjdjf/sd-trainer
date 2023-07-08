@@ -127,7 +127,7 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
 
             tokens_2 = self.tokenizer_2(prompts, max_length=self.tokenizer_2.model_max_length, padding="max_length",
                                     truncation=True, return_tensors='pt').input_ids.to(self.device)
-            encoder_2_output = self.text_encoder_2(tokens, output_hidden_states=True)
+            encoder_2_output = self.text_encoder_2(tokens_2, output_hidden_states=True)
             projection = encoder_2_output[0]
             encoder_hidden_state = torch.cat([encoder_hidden_state, encoder_2_output.hidden_states[-2]], dim=2)
         return encoder_hidden_state, projection
