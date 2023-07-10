@@ -5,7 +5,7 @@ import os
 def load_model(path, sdxl = False):
     if sdxl:
         if os.path.isfile(path):
-            pipe = StableDiffusionXLPipeline.from_ckpt(path, scheduler_type = "ddim")
+            pipe = StableDiffusionXLPipeline.from_single_file(path, scheduler_type = "ddim")
             tokenizer = pipe.tokenizer
             tokenizer_2 = pipe.tokenizer_2
             text_encoder = pipe.text_encoder
@@ -25,7 +25,7 @@ def load_model(path, sdxl = False):
         return tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler
     else:
         if os.path.isfile(path):
-            pipe = StableDiffusionPipeline.from_ckpt(path, scheduler_type = "ddim")
+            pipe = StableDiffusionPipeline.from_single_file(path, scheduler_type = "ddim")
             tokenizer = pipe.tokenizer
             text_encoder = pipe.text_encoder
             unet = pipe.unet
