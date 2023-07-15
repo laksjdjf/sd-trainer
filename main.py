@@ -13,6 +13,7 @@ from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils.model import load_model
+from networks.lora import add_lora
 
 # データローダー用の関数
 def collate_fn(x):
@@ -47,6 +48,9 @@ def main(config):
     print("weight_dtype:", weight_dtype)
 
     tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler = load_model(config.model.input_path, sdxl)
+    if default(config.model, "add_lora", False):
+        unet.requires_grad_(False)
+        add_lora(config.model.add_lora, unet, text_encoder)
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
     latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
@@ -218,6 +222,9 @@ def main(config):
                 encoder_output_2 = text_encoder_2(tokens_2, output_hidden_states=True)
                 encoder_hidden_states_2 = encoder_output_2.hidden_states[clip_skip]
                 projection = encoder_output_2[0]
+                for i, prompt in enumerate(batch["captions"]):
+                    if prompt == "":
+                        projection[i] *= 0 # zero vector
                 encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=2)
 
             if 'latents' in batch: # 事前に計算した潜在変数を使う場合
