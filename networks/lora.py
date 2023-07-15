@@ -6,11 +6,20 @@ import os
 from networks.loha import LohaModule
 import contextlib
 
+from safetensors.torch import load_file
+import os
+
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
+
+def load(file):
+    if os.path.splitext(file)[1] == ".safetensors":
+        return load_file(file)
+    else:
+        return torch.load(file, map_location="cpu")
 
 
 class LoRAModule(torch.nn.Module):
@@ -77,7 +86,7 @@ class LoRAModule(torch.nn.Module):
             return self.org_forward(x)
         else:
             return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
-            
+
 class LoRANetwork(torch.nn.Module):
     def __init__(self, text_encoder, unet, up_only, train_encoder=False, rank=4, conv_rank=None, multiplier=1.0, alpha=1, module=None) -> None:
         super().__init__()
@@ -179,12 +188,7 @@ class LoRANetwork(torch.nn.Module):
             torch.save(state_dict, file)
             
     def load_weights(self, file):
-        if os.path.splitext(file)[1] == ".safetensors":
-            from safetensors.torch import load_file
-
-            weights_sd = load_file(file)
-        else:
-            weights_sd = torch.load(file, map_location="cpu")
+        weights_sd = load(file)
 
         info = self.load_state_dict(weights_sd, False)
         return info
