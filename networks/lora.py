@@ -129,13 +129,14 @@ class LoRAModule(torch.nn.Module):
         if multiplier is None:
             multiplier = self.multiplier
 
-        up_weight = self.lora_up.weight.to(torch.float) # out_dim, rank, [kernel, kernel]
-        down_weight = self.lora_down.weight.to(torch.float) # rank, in_dim, [1, 1]
-        rank = self.lora_rank
-        target_shape = list(up_weight.shape)
-        target_shape[1] = down_weight.shape[1]  # out_dim, in_dim, [kernel, kernel]
-
-        lora_weight = up_weight.view(-1, rank) @ down_weight.view(rank, -1)  # out_dim*kernel*kernel, in_dim
+        up_weight = self.lora_up.weight.to(torch.float) # out_dim, rank, [1, 1]
+        down_weight = self.lora_down.weight.to(torch.float) # rank, in_dim, [kernel, kernel]
+        
+        rank = up_weight.shape[1]
+        target_shape = list(down_weight.shape)
+        target_shape[0] = up_weight.shape[0]  # out_dim, in_dim, [kernel, kernel]
+        
+        lora_weight = up_weight.view(-1, rank) @ down_weight.view(rank, -1)  # out_dim, in_dim*kernel*kernel
         lora_weight = lora_weight.view(target_shape)  # out_dim, in_dim, [kernel, kernel]
 
         return lora_weight * multiplier * self.scale
