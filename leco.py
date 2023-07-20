@@ -20,12 +20,17 @@ from leco_utils.leco_dataset import TextEmbeddingDataset
 
 from utils.model import load_model
 
+def default(dic, key, default_value):
+    if hasattr(dic, key) and getattr(dic, key) is not None:
+        return getattr(dic, key)
+    else:
+        return default_value
+
 # 文字列からモジュールを取得
 def get_attr_from_config(config_text: str):
     module = ".".join(config_text.split(".")[:-1])
     attr = config_text.split(".")[-1]
     return getattr(importlib.import_module(module), attr)
-
 
 def get_added_cond_kwargs(projections, size_condition):
     if projections[0] is not None:
@@ -64,6 +69,8 @@ def main(config):
     device = torch.device('cuda')
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
     print("weight_dtype:", weight_dtype)
+    
+    clip_skip = default(config.model, "clip_skip", -1)
 
     tokenizer, tokenizer_2, text_encoder, text_encoder_2, _, unet, scheduler = load_model(config.model.input_path, hasattr(config.model, "sdxl") and config.model.sdxl)
     noise_scheduler_class = get_attr_from_config(config.leco.noise_scheduler)
@@ -135,7 +142,7 @@ def main(config):
     # テキスト埋め込みの生成
     print("プロンプトを処理します。")
     prompts = OmegaConf.load(config.leco.prompts_file)
-    dataset = TextEmbeddingDataset(prompts, tokenizer, text_encoder, tokenizer_2, text_encoder_2, device, batch_size)
+    dataset = TextEmbeddingDataset(prompts, tokenizer, text_encoder, tokenizer_2, text_encoder_2, device, batch_size,clip_skip)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0, collate_fn=collate_fn)
     
     del text_encoder, tokenizer, text_encoder_2, tokenizer_2
