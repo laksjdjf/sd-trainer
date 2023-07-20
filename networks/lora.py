@@ -6,11 +6,20 @@ import os
 from networks.loha import LohaModule
 import contextlib
 
+from safetensors.torch import load_file
+import os
+
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
+
+def load(file):
+    if os.path.splitext(file)[1] == ".safetensors":
+        return load_file(file)
+    else:
+        return torch.load(file, map_location="cpu")
 
 
 class LoRAModule(torch.nn.Module):
@@ -77,10 +86,6 @@ class LoRAModule(torch.nn.Module):
             return self.org_forward(x)
         else:
             return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
-        
-             
-
-
 
 class LoRANetwork(torch.nn.Module):
     def __init__(self, text_encoder, unet, up_only, train_encoder=False, rank=4, conv_rank=None, multiplier=1.0, alpha=1, module=None) -> None:
@@ -181,6 +186,12 @@ class LoRANetwork(torch.nn.Module):
             save_file(state_dict, file)
         else:
             torch.save(state_dict, file)
+            
+    def load_weights(self, file):
+        weights_sd = load(file)
+
+        info = self.load_state_dict(weights_sd, False)
+        return info
 
     #重みの監視用だが使ってない
     def weight_log(self):
@@ -205,3 +216,49 @@ class LoRANetwork(torch.nn.Module):
         yield
         for lora in self.text_encoder_loras + self.unet_loras:
             lora.multiplier = 1.0
+
+def add_lora(file, unet, text_encoder=None, multiplier=1.0):
+    state_dict = load(file)
+    keys = state_dict.keys()
+    count = 0
+    for name, module in unet.named_modules():
+        if module.__class__.__name__ in UNET_TARGET_REPLACE_MODULE_TRANSFORMER + UNET_TARGET_REPLACE_MODULE_CONV:
+            for child_name, child_module in module.named_modules():
+                if child_module.__class__.__name__ in ["Linear","Conv2d"]:
+                    lora_name = LORA_PREFIX_UNET + '.' + name + '.' + child_name
+                    lora_name = lora_name.replace('.', '_')
+                    target_keys = [key for key in keys if lora_name in key]
+                    if len(target_keys) != 0:
+                        count += 1
+                        up = state_dict[[key for key in target_keys if "lora_up" in key][0]].to(unet.device,dtype = unet.dtype)
+                        down = state_dict[[key for key in target_keys if "lora_down" in key][0]].to(unet.device,dtype = unet.dtype)
+                        alpha = state_dict[[key for key in target_keys if "alpha" in key][0]].to(unet.device,dtype = unet.dtype)
+                        target_shape = child_module.weight.shape
+                        rank = up.shape[1]
+                        up = up.view(-1,rank)
+                        down = down.view(rank,-1)
+                        weight = (up @ down).view(target_shape)
+                        child_module.weight += weight * alpha * multiplier / rank
+    print(f"Applied lora {count} modules in unet")
+    count = 0
+    
+    if text_encoder is not None:
+        for name, module in text_encoder.named_modules():
+            if module.__class__.__name__ in TEXT_ENCODER_TARGET_REPLACE_MODULE:
+                for child_name, child_module in module.named_modules():
+                    if child_module.__class__.__name__ in ["Linear","Conv2d"]:
+                        lora_name = LORA_PREFIX_TEXT_ENCODER + '.' + name + '.' + child_name
+                        lora_name = lora_name.replace('.', '_')
+                        target_keys = [key for key in keys if lora_name in key]
+                        if len(target_keys) != 0:
+                            count += 1
+                            up = state_dict[[key for key in target_keys if "lora_up" in key][0]].to(text_encoder.device,dtype = text_encoder.dtype)
+                            down = state_dict[[key for key in target_keys if "lora_down" in key][0]].to(text_encoder.device,dtype = text_encoder.dtype)
+                            alpha = state_dict[[key for key in target_keys if "alpha" in key][0]].to(text_encoder.device,dtype = text_encoder.dtype)
+                            target_shape = child_module.weight.shape
+                            rank = up.shape[1]
+                            up = up.view(-1,rank)
+                            down = down.view(rank,-1)
+                            weight = (up @ down).view(target_shape)
+                            child_module.weight += weight * alpha * multiplier / rank
+    print(f"Applied lora {count} modules in text encoder")

@@ -13,6 +13,7 @@ from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils.model import load_model
+from networks.lora import add_lora
 
 # データローダー用の関数
 def collate_fn(x):
@@ -24,32 +25,49 @@ def get_attr_from_config(config_text: str):
     attr = config_text.split(".")[-1]
     return getattr(importlib.import_module(module), attr)
 
+def default(dic, key, default_value):
+    if hasattr(dic, key) and getattr(dic, key) is not None:
+        return getattr(dic, key)
+    else:
+        return default_value
 
 def main(config):
-    if hasattr(config.train, "seed") and config.train.seed is not None:
-        set_seed(config.train.seed)
+    seed = default(config.train, "seed", None)
+    if seed is not None:
+        set_seed(seed)
+
+    sdxl = default(config.model, "sdxl", False)
 
     lrs = config.train.lr.split(",")
     text_lr, unet_lr = float(lrs[0]), float(lrs[-1])  # 長さが1の場合同じ値になる
+    print("text_lr:", text_lr, "unet_lr:", unet_lr)
 
     device = torch.device('cuda')
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
+    amp = not config.train.amp == False
     print("weight_dtype:", weight_dtype)
 
-    tokenizer, text_encoder, vae, unet, scheduler = load_model(config.model.input_path)
+    tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler = load_model(config.model.input_path, sdxl)
+    if default(config.model, "add_lora", False):
+        unet.requires_grad_(False)
+        add_lora(config.model.add_lora, unet, text_encoder)
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
+    latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
     
-    if hasattr(config.train, "tome_ratio") and config.train.tome_ratio is not None:
+    clip_skip = default(config.model, "clip_skip", -1)
+        
+    if default(config.train, "tome_ratio", False):
         import tomesd
         tomesd.apply_patch(unet, ratio=config.train.tome_ratio)
+        print(f"tomeを適用しました。ratio={config.train.tome_ratio}")
        
     if config.train.use_xformers:
         unet.set_use_memory_efficient_attention_xformers(True)
         print("xformersを適用しました。")
 
     # ampの設定、config.train.ampがFalseなら無効
-    scaler = torch.cuda.amp.GradScaler(enabled=not config.train.amp == False)
+    scaler = torch.cuda.amp.GradScaler(enabled=amp)
 
     params = []  # optimizerに入れるパラメータを格納するリスト
     # networkの準備
@@ -57,7 +75,7 @@ def main(config):
         network_class = get_attr_from_config(config.network.module)
         network = network_class(text_encoder, unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
         if config.network.resume is not None:
-            network.load_state_dict(torch.load(config.network.resume))
+            network.load_weights(config.network.resume)
         network.train(config.network.train)
         network.requires_grad_(config.network.train)
         if config.network.train:
@@ -87,6 +105,8 @@ def main(config):
         else:
             params.append({'params': unet.parameters(), 'lr': unet_lr})
             if config.train.train_encoder:
+                if sdxl:
+                    raise NotImplementedError("SDXLの場合はtext_encoderの学習はできません。")
                 params.append({'params': text_encoder.parameters(), 'lr': text_lr})
 
     # controlnetの準備
@@ -146,6 +166,8 @@ def main(config):
 
     # 型の指定とGPUへの移動
     text_encoder.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
+    if text_encoder_2 is not None:
+        text_encoder_2.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
     vae.to(device, dtype=weight_dtype)
     unet.to(device, dtype=torch.float32 if config.train.train_unet else weight_dtype)
     if network is not None:
@@ -191,29 +213,53 @@ def main(config):
 
             tokens = tokenizer(batch["captions"], max_length=tokenizer.model_max_length, padding="max_length",
                                truncation=True, return_tensors='pt').input_ids.to(device)
-            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.to(device)
+            if tokenizer_2 is not None:
+                tokens_2 = tokenizer_2(batch["captions"], max_length=tokenizer_2.model_max_length, padding="max_length",
+                               truncation=True, return_tensors='pt').input_ids.to(device)
+            
+            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip]
+            if text_encoder_2 is not None:
+                encoder_output_2 = text_encoder_2(tokens_2, output_hidden_states=True)
+                encoder_hidden_states_2 = encoder_output_2.hidden_states[clip_skip]
+                projection = encoder_output_2[0]
+                for i, prompt in enumerate(batch["captions"]):
+                    if prompt == "":
+                        projection[i] *= 0 # zero vector
+                encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=2)
 
             if 'latents' in batch: # 事前に計算した潜在変数を使う場合
-                latents = batch['latents'].to(device) * 0.18215
+                latents = batch['latents'].to(device) * latent_scale
             else:
-                latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * 0.18215
-
+                latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * latent_scale
+            
             if "pfg" in batch: 
                 pfg_inputs = batch["pfg"].to(device)
-                with torch.autocast("cuda", enabled=not config.train.amp == False):
+                with torch.autocast("cuda", enabled=not config.train.amp == False, dtype=weight_dtype):
                     pfg_feature = pfg(pfg_inputs).to(dtype=encoder_hidden_states.dtype)
                 encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
 
             noise = torch.randn_like(latents)
+            
+            if default(config.train,"noise_offset", False):
+                noise_offset = config.train.noise_offset * torch.randn(latents.shape[0], latents.shape[1], 1, 1)
+                noise = noise + noise_offset.to(noise.device, dtype=noise.dtype)
+
             bsz = latents.shape[0]
 
+            if sdxl:
+                size_condition = list((latents.shape[2]*8, latents.shape[3]*8) + (0, 0) + (latents.shape[2]*8, latents.shape[3]*8))
+                size_condition = torch.tensor([size_condition], dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
+                added_cond_kwargs = {"text_embeds": projection, "time_ids": size_condition}
+            else:
+                added_cond_kwargs = None
+                
             # step_rangeの範囲内でランダムにstepを選択
             timesteps = torch.randint(step_range[0], step_range[1], (bsz,), device=latents.device)
             timesteps = timesteps.long()
 
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            with torch.autocast("cuda", enabled=not config.train.amp == False):
+            with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                 if controlnet is not None:
                     down_block_res_samples, mid_block_res_sample = controlnet(
                         noisy_latents,
@@ -225,12 +271,14 @@ def main(config):
                 else:
                     down_block_res_samples, mid_block_res_sample = None, None
 
-                noise_pred = unet(noisy_latents,
-                                  timesteps,
-                                  encoder_hidden_states,
-                                  down_block_additional_residuals=down_block_res_samples,
-                                  mid_block_additional_residual=mid_block_res_sample,
-                                  ).sample
+                noise_pred = unet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states,
+                    down_block_additional_residuals=down_block_res_samples,
+                    mid_block_additional_residual=mid_block_res_sample,
+                    added_cond_kwargs=added_cond_kwargs,
+                ).sample
 
             if config.model.v_prediction:
                 noise = noise_scheduler.get_velocity(latents, noise, timesteps)
@@ -264,7 +312,7 @@ def main(config):
             progress_bar.set_postfix(logs)
 
             final = total_steps == global_steps # 最後のステップかどうか
-            save(global_steps, final, logs, batch, text_encoder, unet, vae, tokenizer, noise_scheduler, network, pfg, controlnet)
+            save(global_steps, final, logs, batch, text_encoder, text_encoder_2, unet, vae, tokenizer, tokenizer_2, noise_scheduler, network, pfg, controlnet)
             if final:
                 return
 
