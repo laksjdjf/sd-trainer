@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from networks.lora import LoRAModule
+
 class HadaWeight(torch.autograd.Function):
     @staticmethod
     def forward(ctx, orig_weight, w1a, w1b, w2a, w2b, scale=torch.tensor(1)):
@@ -83,7 +85,7 @@ def make_weight_cp(orig_weight, t1, w1a, w1b, t2, w2a, w2b, scale):
     return HadaWeightCP.apply(orig_weight, t1, w1a, w1b, t2, w2a, w2b, scale)
 
 
-class LohaModule(nn.Module):
+class LohaModule(LoRAModule):
     """
     Hadamard product Implementaion for Low Rank Adaptation
     """
@@ -176,38 +178,37 @@ class LohaModule(nn.Module):
         torch.nn.init.constant_(self.hada_w2_a, 0)
 
         self.multiplier = multiplier
-        self.org_module = [org_module]  # remove in applying
+        self.org_module = org_module  # remove in applying
         self.grad_ckpt = False
 
-    def apply_to(self):
-        self.org_module[0].forward = self.forward
-
-    def get_weight(self):
+    def get_weight(self, multiplier=None):
+        if multiplier is None:
+            multiplier = self.multiplier
         d_weight = self.hada_w1_a @ self.hada_w1_b
         d_weight *= self.hada_w2_a @ self.hada_w2_b
-        return (d_weight).reshape(self.shape)
+        return (d_weight).reshape(self.shape) * multiplier * self.scale
 
     @torch.enable_grad()
     def forward(self, x):
         if self.multiplier == 0.0:
-            return self.org_module[0](x)
+            return self.org_module(x)
         # print(torch.mean(torch.abs(self.orig_w1a.to(x.device) - self.hada_w1_a)), end='\r')
         if self.cp:
             weight = make_weight_cp(
-                self.org_module[0].weight.data,
+                self.org_module.weight.data,
                 self.hada_t1, self.hada_w1_a, self.hada_w1_b,
                 self.hada_t1, self.hada_w2_a, self.hada_w2_b,
                 scale=torch.tensor(self.scale*self.multiplier),
             )
         else:
             weight = make_weight(
-                self.org_module[0].weight.data,
+                self.org_module.weight.data,
                 self.hada_w1_a, self.hada_w1_b,
                 self.hada_w2_a, self.hada_w2_b,
                 scale=torch.tensor(self.scale*self.multiplier),
             )
 
-        bias = None if self.org_module[0].bias is None else self.org_module[0].bias.data
+        bias = None if self.org_module.bias is None else self.org_module.bias.data
         return self.op(
             x,
             weight.view(self.shape),
