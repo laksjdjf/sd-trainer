@@ -98,29 +98,29 @@ class LoRAModule(torch.nn.Module):
         torch.nn.init.zeros_(self.lora_up.weight)
 
         self.multiplier = multiplier
-        self.org_module = org_module
+        self.org_module = [org_module] # moduleにならないようにlistに入れる
 
     def apply_to(self, multiplier=None):
         if multiplier is not None:
             self.multiplier = multiplier
-        self.org_forward = self.org_module.forward
-        self.org_module.forward = self.forward
+        self.org_forward = self.org_module[0].forward
+        self.org_module[0].forward = self.forward
 
     def unapply_to(self):
         if self.org_forward is not None:
-            self.org_module.forward = self.org_forward
+            self.org_module[0].forward = self.org_forward
 
     def merge_to(self, multiplier=None, sign=1):
         lora_weight = self.get_weight(multiplier) * sign
 
         # get org weight
-        org_sd = self.org_module.state_dict()
+        org_sd = self.org_module[0].state_dict()
         org_weight = org_sd["weight"]
         weight = org_weight + lora_weight.to(org_weight.device, dtype=org_weight.dtype)
 
         # set weight to org_module
         org_sd["weight"] = weight
-        self.org_module.load_state_dict(org_sd)
+        self.org_module[0].load_state_dict(org_sd)
 
     def restore_from(self, multiplier=None):
         self.merge_to(multiplier=multiplier, sign=-1)

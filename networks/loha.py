@@ -28,6 +28,14 @@ class HadaWeight(torch.autograd.Function):
         del temp
         return grad_out, grad_w1a, grad_w1b, grad_w2a, grad_w2b, None
 
+'''
+# for test
+class HadaWeight:
+    @staticmethod
+    def apply(orig_weight, w1a, w1b, w2a, w2b, scale=torch.tensor(1)):
+        diff_weight = ((w1a@w1b)*(w2a@w2b)) * scale
+        return orig_weight.reshape(diff_weight.shape) + diff_weight
+'''
 
 class HadaWeightCP(torch.autograd.Function):
     @staticmethod
@@ -109,7 +117,7 @@ class LohaModule(nn.Module):
             if lora_dim == "dynamic":
                 lora_dim = min(math.ceil(in_dim ** 0.5),
                                math.ceil(out_dim ** 0.5))
-                self.lora_dim = lora_dim
+            self.lora_dim = lora_dim
             self.cp = use_cp and k_size != (1, 1)
             if self.cp:
                 shape = (out_dim, in_dim, *k_size)
@@ -129,7 +137,7 @@ class LohaModule(nn.Module):
             if lora_dim == "dynamic":
                 lora_dim = min(math.ceil(in_dim ** 0.5),
                                math.ceil(out_dim ** 0.5))
-                self.lora_dim = lora_dim
+            self.lora_dim = lora_dim
             shape = (out_dim, in_dim)
             self.op = F.linear
             self.extra_args = {}
@@ -176,30 +184,30 @@ class LohaModule(nn.Module):
         torch.nn.init.constant_(self.hada_w2_a, 0)
 
         self.multiplier = multiplier
-        self.org_module = org_module  # remove in applying
+        self.org_module = [org_module]
         self.grad_ckpt = False
         
     def apply_to(self, multiplier=None):
         if multiplier is not None:
             self.multiplier = multiplier
-        self.org_forward = self.org_module.forward
-        self.org_module.forward = self.forward
+        self.org_forward = self.org_module[0].forward
+        self.org_module[0].forward = self.forward
 
     def unapply_to(self):
         if self.org_forward is not None:
-            self.org_module.forward = self.org_forward
+            self.org_module[0].forward = self.org_forward
 
     def merge_to(self, multiplier=None, sign=1):
         lora_weight = self.get_weight(multiplier) * sign
 
         # get org weight
-        org_sd = self.org_module.state_dict()
+        org_sd = self.org_module[0].state_dict()
         org_weight = org_sd["weight"]
         weight = org_weight + lora_weight.to(org_weight.device, dtype=org_weight.dtype)
 
         # set weight to org_module
         org_sd["weight"] = weight
-        self.org_module.load_state_dict(org_sd)
+        self.org_module[0].load_state_dict(org_sd)
 
     def restore_from(self, multiplier=None):
         self.merge_to(multiplier=multiplier, sign=-1)
@@ -214,24 +222,24 @@ class LohaModule(nn.Module):
     @torch.enable_grad()
     def forward(self, x):
         if self.multiplier == 0.0:
-            return self.org_module(x)
+            return self.org_module[0](x)
         # print(torch.mean(torch.abs(self.orig_w1a.to(x.device) - self.hada_w1_a)), end='\r')
         if self.cp:
             weight = make_weight_cp(
-                self.org_module.weight.data,
+                self.org_module[0].weight.data,
                 self.hada_t1, self.hada_w1_a, self.hada_w1_b,
                 self.hada_t1, self.hada_w2_a, self.hada_w2_b,
                 scale=torch.tensor(self.scale*self.multiplier),
             )
         else:
             weight = make_weight(
-                self.org_module.weight.data,
+                self.org_module[0].weight.data,
                 self.hada_w1_a, self.hada_w1_b,
                 self.hada_w2_a, self.hada_w2_b,
                 scale=torch.tensor(self.scale*self.multiplier),
             )
 
-        bias = None if self.org_module.bias is None else self.org_module.bias.data
+        bias = None if self.org_module[0].bias is None else self.org_module[0].bias.data
         return self.op(
             x,
             weight.view(self.shape),

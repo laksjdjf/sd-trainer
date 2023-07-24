@@ -13,7 +13,6 @@ from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils.model import load_model
-from networks.lora import add_lora
 
 # データローダー用の関数
 def collate_fn(x):
@@ -75,7 +74,7 @@ def main(config):
     # networkの準備
     if hasattr(config, "network"):
         network_class = get_attr_from_config(config.network.module)
-        if config.network.resume is not None:
+        if config.network.resume is None:
             network = network_class([text_encoder,text_encoder_2], unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
         else:
             network = network_class.from_file([text_encoder,text_encoder_2], unet, config.network.resume)
