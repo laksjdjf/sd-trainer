@@ -13,7 +13,6 @@ from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils.model import load_model
-from networks.lora import add_lora
 
 # データローダー用の関数
 def collate_fn(x):
@@ -48,9 +47,11 @@ def main(config):
     print("weight_dtype:", weight_dtype)
 
     tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler = load_model(config.model.input_path, sdxl)
+    
+    # LoRAの事前マージ
     if default(config.model, "add_lora", False):
-        unet.requires_grad_(False)
-        add_lora(config.model.add_lora, unet, text_encoder)
+        from networks.lora import LoRANetwork
+        LoRANetwork.from_file([text_encoder,text_encoder_2], unet, config.add_lora, mode="merge")
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
     latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
@@ -73,9 +74,10 @@ def main(config):
     # networkの準備
     if hasattr(config, "network"):
         network_class = get_attr_from_config(config.network.module)
-        network = network_class(text_encoder, unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
-        if config.network.resume is not None:
-            network.load_weights(config.network.resume)
+        if config.network.resume is None:
+            network = network_class([text_encoder,text_encoder_2], unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
+        else:
+            network = network_class.from_file([text_encoder,text_encoder_2], unet, config.network.resume)
         network.train(config.network.train)
         network.requires_grad_(config.network.train)
         if config.network.train:
@@ -106,7 +108,7 @@ def main(config):
             params.append({'params': unet.parameters(), 'lr': unet_lr})
             if config.train.train_encoder:
                 if sdxl:
-                    raise NotImplementedError("SDXLの場合はtext_encoderの学習はできません。")
+                    params.append({'params': text_encoder_2.parameters(), 'lr': text_lr})
                 params.append({'params': text_encoder.parameters(), 'lr': text_lr})
 
     # controlnetの準備
@@ -142,6 +144,9 @@ def main(config):
     unet.train(config.train.train_unet)
     text_encoder.requires_grad_(config.train.train_encoder)
     text_encoder.train(config.train.train_encoder)
+    if text_encoder_2 is not None:
+        text_encoder_2.requires_grad_(config.train.train_encoder)
+        text_encoder_2.train(config.train.train_encoder)
 
     if config.feature.up_only and network is not None:
         unet.requires_grad_(False)
@@ -157,6 +162,9 @@ def main(config):
             text_encoder.text_model.embeddings.requires_grad_(True)  # 先頭のモジュールが勾配有効である必要があるらしい
             text_encoder.train() #trainがTrueである必要があるらしい
             text_encoder.gradient_checkpointing_enable()
+            if text_encoder_2 is not None:
+                text_encoder_2.train()
+                text_encoder_2.gradient_checkpointing_enable()
         else:
             if not config.feature.up_only:
                 unet.conv_in.requires_grad_(True)

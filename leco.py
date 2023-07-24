@@ -20,25 +20,41 @@ from leco_utils.leco_dataset import TextEmbeddingDataset
 
 from utils.model import load_model
 
+def default(dic, key, default_value):
+    if hasattr(dic, key) and getattr(dic, key) is not None:
+        return getattr(dic, key)
+    else:
+        return default_value
+
 # 文字列からモジュールを取得
 def get_attr_from_config(config_text: str):
     module = ".".join(config_text.split(".")[:-1])
     attr = config_text.split(".")[-1]
     return getattr(importlib.import_module(module), attr)
 
+def get_added_cond_kwargs(projections, size_condition):
+    if projections[0] is not None:
+        return {"text_embeds": torch.cat(projections), "time_ids": torch.cat([size_condition]*len(projections))}
+    else:
+        return None
+    
 # cfgの計算
 @torch.no_grad()
-def cfg(unet, latents, timesteps, positive_negative, guidance_scale, neutral=None):
+def cfg(unet, latents, timesteps, positive_negative, guidance_scale, positive_proj, negative_proj, size_condition=None, neutral=None, neutral_proj=None):
     if neutral is not None:
+        added_cond_kwargs = get_added_cond_kwargs([positive_proj, negative_proj, neutral_proj], size_condition)
         positive_negative_neutral = torch.cat([positive_negative, neutral], dim=0)
-        positive, negative, neutral = unet(torch.cat([latents]*3), timesteps, positive_negative_neutral).sample.chunk(3)
+        positive, negative, neutral = unet(torch.cat([latents]*3), timesteps, positive_negative_neutral, added_cond_kwargs=added_cond_kwargs).sample.chunk(3)
         return neutral + guidance_scale * (positive - negative)
     elif guidance_scale == 1:
-        return unet(latents, timesteps, positive_negative.chunk(2)[0]).sample
+        added_cond_kwargs = get_added_cond_kwargs([positive_proj], size_condition)
+        return unet(latents, timesteps, positive_negative.chunk(2)[0], added_cond_kwargs=added_cond_kwargs).sample
     elif guidance_scale == 0:
-        return unet(latents, timesteps, positive_negative.chunk(2)[1]).sample
+        added_cond_kwargs = get_added_cond_kwargs([negative_proj], size_condition)
+        return unet(latents, timesteps, positive_negative.chunk(2)[1], added_cond_kwargs=added_cond_kwargs).sample
     else:
-        positive, negative = unet(torch.cat([latents]*2), timesteps, positive_negative).sample.chunk(2)
+        added_cond_kwargs = get_added_cond_kwargs([positive_proj, negative_proj], size_condition)
+        positive, negative = unet(torch.cat([latents]*2), timesteps, positive_negative, added_cond_kwargs=added_cond_kwargs).sample.chunk(2)
         return negative + guidance_scale * (positive - negative)
     
 def collate_fn(batch):
@@ -53,8 +69,10 @@ def main(config):
     device = torch.device('cuda')
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
     print("weight_dtype:", weight_dtype)
+    
+    clip_skip = default(config.model, "clip_skip", -1)
 
-    tokenizer, text_encoder, _, unet, scheduler = load_model(config.model.input_path)
+    tokenizer, tokenizer_2, text_encoder, text_encoder_2, _, unet, scheduler = load_model(config.model.input_path, hasattr(config.model, "sdxl") and config.model.sdxl)
     noise_scheduler_class = get_attr_from_config(config.leco.noise_scheduler)
     noise_scheduler = noise_scheduler_class.from_config(scheduler.config)
     
@@ -73,7 +91,7 @@ def main(config):
 
     # networkの準備
     network_class = get_attr_from_config(config.network.module)
-    network = network_class(text_encoder, unet, False, False, **config.network.args)
+    network = network_class([text_encoder, text_encoder_2], unet, False, False, **config.network.args)
     if config.network.resume is not None:
         network.load_state_dict(torch.load(config.network.resume))
     network.train()
@@ -94,6 +112,9 @@ def main(config):
     unet.eval()
     text_encoder.requires_grad_(False)
     text_encoder.eval()
+    if text_encoder_2 is not None:
+        text_encoder_2.requires_grad_(False)
+        text_encoder_2.eval()
 
     # 勾配チェックポイントによるVRAM削減（計算時間増）
     if config.train.gradient_checkpointing:
@@ -104,6 +125,8 @@ def main(config):
 
     # 型の指定とGPUへの移動
     text_encoder.to(device, dtype=weight_dtype)
+    if text_encoder_2 is not None:
+        text_encoder_2.to(device, dtype=weight_dtype)
     unet.to(device, dtype=weight_dtype)
     network.to(device, dtype=torch.float32)
 
@@ -119,10 +142,10 @@ def main(config):
     # テキスト埋め込みの生成
     print("プロンプトを処理します。")
     prompts = OmegaConf.load(config.leco.prompts_file)
-    dataset = TextEmbeddingDataset(prompts, tokenizer, text_encoder, device, batch_size)
+    dataset = TextEmbeddingDataset(prompts, tokenizer, text_encoder, tokenizer_2, text_encoder_2, device, batch_size,clip_skip)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0, collate_fn=collate_fn)
     
-    del text_encoder, tokenizer
+    del text_encoder, tokenizer, text_encoder_2, tokenizer_2
     
     total_steps = config.leco.epochs * len(dataloader)
     save_steps = config.leco.save_steps
@@ -140,15 +163,18 @@ def main(config):
     loss_ema = None  # 訓練ロスの指数平均
 
     latents_and_times = {i:[] for i in range(len(dataloader))}
+    
+    size_condition = list((resolution, resolution) + (0, 0) + (resolution, resolution))
+    size_condition = torch.tensor([size_condition], dtype=weight_dtype, device=device).repeat(batch_size, 1)
 
     for epoch in range(config.leco.epochs):
         for idx, batch in enumerate(dataloader):
             b_start = time.perf_counter()
 
-            target = batch["target"]
-            positive = batch["positive"]
-            negative = batch["negative"]
-            neutral = batch["neutral"]
+            target, target_proj = batch["target"]
+            positive, positive_proj = batch["positive"]
+            negative, negative_proj = batch["negative"]
+            neutral, neutral_proj = batch["neutral"]
             guidance_scale = batch["guidance_scale"]
 
             # デノイズ途中の潜在変数を生成
@@ -164,7 +190,7 @@ def main(config):
                     for i, t in tqdm(enumerate(noise_scheduler.timesteps[0:timestep_to[-1]+1])):
                         timestep = t + timedelta
                         latents_input = noise_scheduler.scale_model_input(latents, timestep)
-                        noise_pred = cfg(unet, latents_input, timestep, torch.cat([target, negative],dim=0), generate_guidance_scale)
+                        noise_pred = cfg(unet, latents_input, timestep, torch.cat([target, negative],dim=0), generate_guidance_scale, target_proj, negative_proj, size_condition)
                         latents = noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
                         if i == timestep_to[target_index]:
                             target_index += 1
@@ -173,8 +199,10 @@ def main(config):
             with torch.autocast("cuda", enabled=not config.train.amp == False): 
                 latents, timesteps = latents_and_times[idx].pop()
                 with network.set_temporary_multiplier(0.0):
-                    noise_pred_positive = cfg(unet, latents, timesteps, torch.cat([positive, negative],dim=0), guidance_scale, neutral=neutral)
-                noise_pred = unet(latents, timesteps, target).sample
+                    noise_pred_positive = cfg(unet, latents, timesteps, torch.cat([positive, negative],dim=0), guidance_scale, positive_proj, negative_proj, size_condition, neutral, neutral_proj)
+                
+                added_cond_kwargs = get_added_cond_kwargs([target_proj], size_condition)
+                noise_pred = unet(latents, timesteps, target,added_cond_kwargs=added_cond_kwargs).sample
             loss = torch.nn.functional.mse_loss(noise_pred.float(), noise_pred_positive.float(), reduction="mean")
             
             if loss_ema is None:

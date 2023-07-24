@@ -8,7 +8,7 @@ def default(dic, key, default_value):
         return default_value
 
 class TextEmbeddingDataset(torch.utils.data.Dataset):
-    def __init__(self, prompts, tokenizer, text_encoder, device, batch_size=1):
+    def __init__(self, prompts, tokenizer, text_encoder, tokenizer_2=None, text_encoder_2=None, device="cuda", batch_size=1, clip_skip=-1):
         self.text_embedding_list = []
         self.batch_size = batch_size
         self.device = device
@@ -24,13 +24,29 @@ class TextEmbeddingDataset(torch.utils.data.Dataset):
 
             tokens = tokenizer(texts, max_length=tokenizer.model_max_length, padding="max_length",
                         truncation=True, return_tensors='pt').input_ids.to(self.device)
-            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).last_hidden_state.detach().float().cpu()
+            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip].detach().float().cpu()
+            if tokenizer_2 is not None:
+                tokens_2 = tokenizer_2(texts, max_length=tokenizer_2.model_max_length, padding="max_length",
+                            truncation=True, return_tensors='pt').input_ids.to(self.device)
+                encoder_output_2 = text_encoder_2(tokens_2, output_hidden_states=True)
+
+                encoder_hidden_states_2 = encoder_output_2.hidden_states[clip_skip].detach().float().cpu()
+                encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=-1)
+                
+                projection = encoder_output_2[0].detach().float().cpu()
+                for i, text in enumerate(texts):
+                    if text == "":
+                        projection[i] *= 0 # zero vector for empty text
+                target_proj, positive_proj, negative_proj, neutral_proj = projection.chunk(4)
+            else:
+                target_proj, positive_proj, negative_proj, neutral_proj = None, None, None, None
+            
             target, positive, negative, neutral = encoder_hidden_states.chunk(4)
             text_dict = {
-                "target": target,
-                "positive": positive, 
-                "negative": negative, 
-                "neutral": neutral if not no_neutral else None,
+                "target": (target, target_proj),
+                "positive": (positive, positive_proj), 
+                "negative": (negative, negative_proj), 
+                "neutral": (neutral, neutral_proj) if not no_neutral else None,
                 "guidance_scale": guidance_scale
             }
             self.text_embedding_list.append(text_dict)
@@ -42,7 +58,12 @@ class TextEmbeddingDataset(torch.utils.data.Dataset):
         batch = {}
         for key in ["target", "positive", "negative", "neutral"]:
             if self.text_embedding_list[idx][key] is not None:
-                batch[key] = self.text_embedding_list[idx][key].repeat(self.batch_size, 1, 1).to(self.device)
+                text_emb = self.text_embedding_list[idx][key][0].repeat(self.batch_size, 1, 1).to(self.device)
+                if self.text_embedding_list[idx][key][1] is not None:
+                    projection = self.text_embedding_list[idx][key][1].repeat(self.batch_size, 1).to(self.device)
+                else:
+                    projection = None
+                batch[key] = (text_emb, projection)
             else:
                 batch[key] = None
         for key in ["guidance_scale"]:
