@@ -24,7 +24,10 @@ class TextEmbeddingDataset(torch.utils.data.Dataset):
 
             tokens = tokenizer(texts, max_length=tokenizer.model_max_length, padding="max_length",
                         truncation=True, return_tensors='pt').input_ids.to(self.device)
-            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip].detach().float().cpu()
+            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True)
+            if tokenizer_2 is None:
+                encoder_hidden_states = text_encoder.text_model.final_layer_norm(encoder_hidden_states)
+            encoder_hidden_states = encoder_hidden_states.hidden_states[clip_skip].detach().float().cpu()
             if tokenizer_2 is not None:
                 tokens_2 = tokenizer_2(texts, max_length=tokenizer_2.model_max_length, padding="max_length",
                             truncation=True, return_tensors='pt').input_ids.to(self.device)

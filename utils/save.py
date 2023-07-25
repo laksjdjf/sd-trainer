@@ -9,6 +9,12 @@ import wandb
 # __init__には出力先：outputと、1エポックごとのステップ数steps_par_epochを引数に取ることが必要。
 # __call__にはSaveと同様の引数を取ることが必要。
 
+def default(dic, key, default_value):
+    if hasattr(dic, key) and getattr(dic, key) is not None:
+        return getattr(dic, key)
+    else:
+        return default_value
+
 # 保存先のディレクトリ
 DIRECTORIES = [
     "trained",
@@ -40,6 +46,7 @@ class Save:
         self.config = config
         self.output = config.model.output_name
         self.image_logs = image_logs
+        self.clip_skip = default(self.config.model, "clip_skip", -1)
         if self.image_logs is not None:
             os.makedirs(self.image_logs, exist_ok=True)
 
@@ -129,12 +136,13 @@ class Save:
                     image = pipeline.generate(
                         prompt,
                         self.negative_prompt,
+                        clip_skip=self.clip_skip,
                         width=self.resolution[0],
                         height=self.resolution[1],
                         pfg_feature=pfg_feature,
                         controlnet=controlnet,
                         guide_image=guide_image,
-                        seed=self.seed + i
+                        seed=self.seed + i,
                     )[0]
                     if self.wandb:
                         images.append(wandb.Image(image, caption=prompt))

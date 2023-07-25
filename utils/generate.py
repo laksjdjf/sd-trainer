@@ -9,12 +9,13 @@ from PIL import Image
 from tqdm import tqdm
 
 class WrapStableDiffusionPipeline(StableDiffusionPipeline):
-    def encode_prompts(self, prompts):
+    def encode_prompts(self, prompts, clip_skip=-1):
         with torch.no_grad():
             tokens = self.tokenizer(prompts, max_length=self.tokenizer.model_max_length, padding="max_length",
                                     truncation=True, return_tensors='pt').input_ids.to(self.device)
-            encoder_hidden_state = self.text_encoder(tokens, output_hidden_states=True).last_hidden_state
-        return encoder_hidden_state
+            encoder_hidden_states = self.text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip]
+            encoder_hidden_states = self.text_encoder.text_model.final_layer_norm(encoder_hidden_states)                                                                  
+        return encoder_hidden_states
 
     def decode_latents(self, latents):
         latents = 1 / 0.18215 * latents
@@ -35,6 +36,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         self,
         prompts,
         negative_prompts,
+        clip_skip=-1,
         height: int = 896,
         width: int = 640,
         guidance_scale: float = 7.0,
@@ -61,7 +63,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
 
         assert len(prompts) == len(negative_prompts), "プロンプトとネガティブプロンプトの数が一致していません"
 
-        encoder_hidden_state = self.encode_prompts(prompts+negative_prompts)
+        encoder_hidden_state = self.encode_prompts(prompts+negative_prompts, clip_skip)
 
         if pfg_feature is not None:
             cond, uncond = encoder_hidden_state.chunk(2)
@@ -119,17 +121,17 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         return images
 
 class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
-    def encode_prompts(self, prompts):
+    def encode_prompts(self, prompts, clip_skip=-2):
         with torch.no_grad():
             tokens = self.tokenizer(prompts, max_length=self.tokenizer.model_max_length, padding="max_length",
                                     truncation=True, return_tensors='pt').input_ids.to(self.device)
-            encoder_hidden_state = self.text_encoder(tokens, output_hidden_states=True).hidden_states[-2]
+            encoder_hidden_state = self.text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip]
 
             tokens_2 = self.tokenizer_2(prompts, max_length=self.tokenizer_2.model_max_length, padding="max_length",
                                     truncation=True, return_tensors='pt').input_ids.to(self.device)
             encoder_2_output = self.text_encoder_2(tokens_2, output_hidden_states=True)
             projection = encoder_2_output[0]
-            encoder_hidden_state = torch.cat([encoder_hidden_state, encoder_2_output.hidden_states[-2]], dim=2)
+            encoder_hidden_state = torch.cat([encoder_hidden_state, encoder_2_output.hidden_states[clip_skip]], dim=2)
         return encoder_hidden_state, projection
 
     def decode_latents(self, latents):
@@ -152,6 +154,7 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
         self,
         prompts,
         negative_prompts,
+        clip_skip=-2,
         height: int = 896,
         width: int = 640,
         guidance_scale: float = 7.0,
@@ -178,7 +181,7 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
 
         assert len(prompts) == len(negative_prompts), "プロンプトとネガティブプロンプトの数が一致していません"
 
-        encoder_hidden_state, projection = self.encode_prompts(prompts+negative_prompts)
+        encoder_hidden_state, projection = self.encode_prompts(prompts+negative_prompts, clip_skip)
 
         if pfg_feature is not None:
             cond, uncond = encoder_hidden_state.chunk(2)

@@ -55,6 +55,7 @@ def main(config):
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
     latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
+    print(f"vae scale factor:{latent_scale}")
     
     clip_skip = default(config.model, "clip_skip", -1)
         
@@ -226,6 +227,8 @@ def main(config):
                                truncation=True, return_tensors='pt').input_ids.to(device)
             
             encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip]
+            if not sdxl:
+                encoder_hidden_states = text_encoder.text_model.final_layer_norm(encoder_hidden_states)
             if text_encoder_2 is not None:
                 encoder_output_2 = text_encoder_2(tokens_2, output_hidden_states=True)
                 encoder_hidden_states_2 = encoder_output_2.hidden_states[clip_skip]
