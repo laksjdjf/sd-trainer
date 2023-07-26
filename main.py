@@ -51,7 +51,7 @@ def main(config):
     # LoRAの事前マージ
     if default(config.model, "add_lora", False):
         from networks.lora import LoRANetwork
-        LoRANetwork.from_file([text_encoder,text_encoder_2], unet, config.add_lora, mode="merge")
+        LoRANetwork.from_file([text_encoder,text_encoder_2], unet, config.model.add_lora, mode="merge")
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
     latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
