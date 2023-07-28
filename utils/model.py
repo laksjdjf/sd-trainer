@@ -97,7 +97,9 @@ class TextModel(nn.Module):
     def gradient_checkpointing_enable(self, enable=True):
         if enable:
             self.text_encoder.gradient_checkpointing_enable()
-            self.text_encoder_2.gradient_checkpointing_enable()
+            if self.sdxl:
+                self.text_encoder_2.gradient_checkpointing_enable()
         else:
             self.text_encoder.gradient_checkpointing_disable()
-            self.text_encoder_2.gradient_checkpointing_disable()
+            if self.sdxl:
+                self.text_encoder_2.gradient_checkpointing_disable()
