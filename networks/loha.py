@@ -28,14 +28,6 @@ class HadaWeight(torch.autograd.Function):
         del temp
         return grad_out, grad_w1a, grad_w1b, grad_w2a, grad_w2b, None
 
-'''
-# for test
-class HadaWeight:
-    @staticmethod
-    def apply(orig_weight, w1a, w1b, w2a, w2b, scale=torch.tensor(1)):
-        diff_weight = ((w1a@w1b)*(w2a@w2b)) * scale
-        return orig_weight.reshape(diff_weight.shape) + diff_weight
-'''
 
 class HadaWeightCP(torch.autograd.Function):
     @staticmethod
@@ -102,6 +94,7 @@ class LohaModule(nn.Module):
         org_module: nn.Module,
         multiplier=1.0, lora_dim=4, alpha=1, dropout=0.,
         use_cp=False,
+        **kwargs,
     ):
         """ if alpha == 0 or None, alpha is rank (no scaling). """
         super().__init__()

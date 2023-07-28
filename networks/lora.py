@@ -1,6 +1,7 @@
 # This code is based on https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
 
 import torch
+import torch.nn.functional as F
 import math
 
 from networks.loha import LohaModule
@@ -50,11 +51,12 @@ def get_rank_and_alpha_from_state_dict(state_dict):
 class LoRAModule(torch.nn.Module):
     # replaces forward method of the original Linear, instead of replacing the original Linear module.
 
-    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, lora_rank=4, alpha=1):
+    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, lora_rank=4, alpha=1, forward_mode=None):
         """ if alpha == 0 or None, alpha is rank (no scaling). """
         super().__init__()
         self.lora_name = lora_name
         self.lora_rank = lora_rank
+        self.forward_mode = forward_mode
 
         if org_module.__class__.__name__ == 'Linear':
             in_dim = org_module.in_features
@@ -65,6 +67,9 @@ class LoRAModule(torch.nn.Module):
                 self.lora_rank = lora_rank
             self.lora_down = torch.nn.Linear(in_dim, lora_rank, bias=False)
             self.lora_up = torch.nn.Linear(lora_rank, out_dim, bias=False)
+            self.op = F.linear
+            self.extra_args = {}
+            kernel_size = (1, 1) # 便宜上の定義
 
         elif org_module.__class__.__name__ == 'Conv2d':
             in_dim = org_module.in_channels
@@ -86,6 +91,18 @@ class LoRAModule(torch.nn.Module):
                 in_dim, self.lora_rank, kernel_size, stride, padding, bias=False)
             self.lora_up = torch.nn.Conv2d(
                 self.lora_rank, out_dim, (1, 1), (1, 1), bias=False)
+            
+            self.op = F.conv2d
+            self.extra_args = {
+                "stride": stride,
+                "padding": padding
+            }
+
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.nm = self.in_dim * self.out_dim * kernel_size[0] * kernel_size[1]
+        self.nplusm = self.in_dim * kernel_size[0] * kernel_size[1] + self.out_dim
+        self.shape = org_module.weight.shape
 
         if type(alpha) == torch.Tensor:
             alpha = alpha.detach().numpy()
@@ -129,15 +146,11 @@ class LoRAModule(torch.nn.Module):
         if multiplier is None:
             multiplier = self.multiplier
 
-        up_weight = self.lora_up.weight.to(torch.float) # out_dim, rank, [1, 1]
-        down_weight = self.lora_down.weight.to(torch.float) # rank, in_dim, [kernel, kernel]
+        up_weight = self.lora_up.weight# out_dim, rank, [1, 1]
+        down_weight = self.lora_down.weight # rank, in_dim, [kernel, kernel]
         
-        rank = up_weight.shape[1]
-        target_shape = list(down_weight.shape)
-        target_shape[0] = up_weight.shape[0]  # out_dim, in_dim, [kernel, kernel]
-        
-        lora_weight = up_weight.view(-1, rank) @ down_weight.view(rank, -1)  # out_dim, in_dim*kernel*kernel
-        lora_weight = lora_weight.view(target_shape)  # out_dim, in_dim, [kernel, kernel]
+        lora_weight = up_weight.view(-1, self.lora_rank) @ down_weight.view(self.lora_rank, -1)  # out_dim, in_dim*kernel*kernel
+        lora_weight = lora_weight.view(self.shape)  # out_dim, in_dim, [kernel, kernel]
 
         return lora_weight * multiplier * self.scale
 
@@ -145,12 +158,24 @@ class LoRAModule(torch.nn.Module):
         if self.multiplier == 0.0:
             return self.org_forward(x)
         else:
+            if self.forward_mode == "merge":
+                if len(x.shape) == 4:
+                    b = x.shape[0] * x.shape[2] * x.shape[3]
+                elif len(x.shape) == 3:
+                    b = x.shape[0] * x.shape[1]
+                else:
+                    b = x.shape[0]
+                #if self.nm < self.nplusm * b:
+                if self.nm < b * (self.lora_rank + 2 * self.out_dim):
+                    weight = self.get_weight() + self.org_module[0].weight
+                    bias = None if self.org_module[0].bias is None else self.org_module[0].bias
+                    return self.op(x, weight, bias, **self.extra_args)
             return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
 
 class LoRANetwork(torch.nn.Module):
     def __init__(
         self,
-        text_encoder,
+        text_model,
         unet,
         up_only,
         train_encoder=False,
@@ -161,6 +186,7 @@ class LoRANetwork(torch.nn.Module):
         conv_alpha=1.0,
         module=None,
         mode="apply",  # "apply" or "merge"
+        forward_mode=None,  # None or "merge"
         state_dict=None,
     ) -> None:
 
@@ -168,6 +194,7 @@ class LoRANetwork(torch.nn.Module):
         self.multiplier = multiplier
         self.lora_rank = rank
         self.alpha = alpha
+        self.forward_mode = forward_mode
 
         if isinstance(self.lora_rank, dict):
             self.conv_lora_rank = self.lora_rank
@@ -185,15 +212,15 @@ class LoRANetwork(torch.nn.Module):
 
         # text encoderのloraを作る
         if train_encoder:
-            if text_encoder[1] is not None:
+            if text_model.sdxl:
                 self.text_encoder_loras = self.create_modules(
-                    LORA_PREFIX_TEXT_ENCODER_1, text_encoder[0], TEXT_ENCODER_TARGET_REPLACE_MODULE, self.lora_rank)
+                    LORA_PREFIX_TEXT_ENCODER_1, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, self.lora_rank)
                 self.text_encoder_loras += self.create_modules(
-                    LORA_PREFIX_TEXT_ENCODER_2, text_encoder[1], TEXT_ENCODER_TARGET_REPLACE_MODULE, self.lora_rank)
+                    LORA_PREFIX_TEXT_ENCODER_2, text_model.text_encoder_2, TEXT_ENCODER_TARGET_REPLACE_MODULE, self.lora_rank)
                 print(f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
             else:
                 self.text_encoder_loras = self.create_modules(
-                    LORA_PREFIX_TEXT_ENCODER, text_encoder[0], TEXT_ENCODER_TARGET_REPLACE_MODULE, self.lora_rank)
+                    LORA_PREFIX_TEXT_ENCODER, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, self.lora_rank)
                 print(f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
         else:
             self.text_encoder_loras = []
@@ -225,14 +252,12 @@ class LoRANetwork(torch.nn.Module):
             self.apply_to()
         elif mode == "merge":
             self.merge_to()
-        else:
-            pass
 
     @classmethod
-    def from_file(cls, text_encoder, unet, path, multiplier=1.0, module=None, mode="apply"):
+    def from_file(cls, text_model, unet, path, multiplier=1.0, module=None, mode="apply"):
         state_dict = load(path)
         modules_rank, modules_alpha = get_rank_and_alpha_from_state_dict(state_dict)
-        network = cls(text_encoder, unet, False, True, rank=modules_rank, alpha=modules_alpha,
+        network = cls(text_model, unet, False, True, rank=modules_rank, alpha=modules_alpha,
                       multiplier=multiplier, module=module, mode=mode, state_dict=state_dict)
         return network
 
@@ -271,7 +296,7 @@ class LoRANetwork(torch.nn.Module):
                             rank = modules_rank
                             alpha = modules_alpha
                         lora = self.module(
-                            lora_name, child_module, self.multiplier, rank, alpha)
+                            lora_name, child_module, self.multiplier, rank, alpha, forward_mode=self.forward_mode)
                         loras.append(lora)
         return loras
 

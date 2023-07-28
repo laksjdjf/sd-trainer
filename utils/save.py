@@ -74,9 +74,15 @@ class Save:
         self.seed = seed
 
     @torch.no_grad()
-    def __call__(self, steps, final, logs, batch, text_encoder , text_encoder_2, unet, vae, tokenizer , tokenizer_2, scheduler, network=None, pfg=None, controlnet=None):
+    def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None):
         if self.wandb:
             self.run.log(logs, step=steps)
+
+        text_encoder = text_model.text_encoder
+        tokenizer = text_model.tokenizer
+        text_encoder_2 = text_model.text_encoder_2
+        tokenizer_2 = text_model.tokenizer_2
+            
         if steps % self.save_n_steps == 0 or final:
             print(f'チェックポイントをセーブするよ!')
             if text_encoder_2 is not None:
