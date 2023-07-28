@@ -72,7 +72,7 @@ def main(config):
     
     clip_skip = default(config.model, "clip_skip", -1)
 
-    tokenizer, tokenizer_2, text_encoder, text_encoder_2, _, unet, scheduler = load_model(config.model.input_path, hasattr(config.model, "sdxl") and config.model.sdxl)
+    text_model , _, unet, scheduler = load_model(config.model.input_path, hasattr(config.model, "sdxl") and config.model.sdxl)
     noise_scheduler_class = get_attr_from_config(config.leco.noise_scheduler)
     noise_scheduler = noise_scheduler_class.from_config(scheduler.config)
     
@@ -91,7 +91,7 @@ def main(config):
 
     # networkの準備
     network_class = get_attr_from_config(config.network.module)
-    network = network_class([text_encoder, text_encoder_2], unet, False, False, **config.network.args)
+    network = network_class(text_model, unet, False, False, **config.network.args)
     if config.network.resume is not None:
         network.load_state_dict(torch.load(config.network.resume))
     network.train()
@@ -110,11 +110,8 @@ def main(config):
     # モデルの設定
     unet.requires_grad_(False)
     unet.eval()
-    text_encoder.requires_grad_(False)
-    text_encoder.eval()
-    if text_encoder_2 is not None:
-        text_encoder_2.requires_grad_(False)
-        text_encoder_2.eval()
+    text_model.requires_grad_(False)
+    text_model.eval()
 
     # 勾配チェックポイントによるVRAM削減（計算時間増）
     if config.train.gradient_checkpointing:
@@ -124,9 +121,8 @@ def main(config):
         print("gradient_checkpointing を適用しました。")
 
     # 型の指定とGPUへの移動
-    text_encoder.to(device, dtype=weight_dtype)
-    if text_encoder_2 is not None:
-        text_encoder_2.to(device, dtype=weight_dtype)
+    text_model.to(device, dtype=weight_dtype)
+
     unet.to(device, dtype=weight_dtype)
     network.to(device, dtype=torch.float32)
 
@@ -142,10 +138,10 @@ def main(config):
     # テキスト埋め込みの生成
     print("プロンプトを処理します。")
     prompts = OmegaConf.load(config.leco.prompts_file)
-    dataset = TextEmbeddingDataset(prompts, tokenizer, text_encoder, tokenizer_2, text_encoder_2, device, batch_size,clip_skip)
+    dataset = TextEmbeddingDataset(prompts, text_model, device, batch_size,clip_skip)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0, collate_fn=collate_fn)
     
-    del text_encoder, tokenizer, text_encoder_2, tokenizer_2
+    del text_model
     
     total_steps = config.leco.epochs * len(dataloader)
     save_steps = config.leco.save_steps
