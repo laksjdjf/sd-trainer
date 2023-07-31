@@ -8,7 +8,7 @@ def default(dic, key, default_value):
         return default_value
 
 class TextEmbeddingDataset(torch.utils.data.Dataset):
-    def __init__(self, prompts, tokenizer, text_encoder, tokenizer_2=None, text_encoder_2=None, device="cuda", batch_size=1, clip_skip=-1):
+    def __init__(self, prompts, text_model, device="cuda", batch_size=1, clip_skip=-1):
         self.text_embedding_list = []
         self.batch_size = batch_size
         self.device = device
@@ -22,25 +22,10 @@ class TextEmbeddingDataset(torch.utils.data.Dataset):
 
             texts = [target, positive, negative, neutral] # 冗長な""の計算とかなくしたい気も知るけど別にいいか 
 
-            tokens = tokenizer(texts, max_length=tokenizer.model_max_length, padding="max_length",
-                        truncation=True, return_tensors='pt').input_ids.to(self.device)
-            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True)
-            if tokenizer_2 is None:
-                encoder_hidden_states = text_encoder.text_model.final_layer_norm(encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states.hidden_states[clip_skip].detach().float().cpu()
-            if tokenizer_2 is not None:
-                tokens_2 = tokenizer_2(texts, max_length=tokenizer_2.model_max_length, padding="max_length",
-                            truncation=True, return_tensors='pt').input_ids.to(self.device)
-                encoder_output_2 = text_encoder_2(tokens_2, output_hidden_states=True)
-
-                encoder_hidden_states_2 = encoder_output_2.hidden_states[clip_skip].detach().float().cpu()
-                encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=-1)
-                
-                projection = encoder_output_2[0].detach().float().cpu()
-                for i, text in enumerate(texts):
-                    if text == "":
-                        projection[i] *= 0 # zero vector for empty text
-                target_proj, positive_proj, negative_proj, neutral_proj = projection.chunk(4)
+            tokens, tokens_2, empty_text = text_model.tokenize(texts)
+            encoder_hidden_states, pooled_output = text_model(tokens, tokens_2, empty_text)
+            if pooled_output is not None:
+                target_proj, positive_proj, negative_proj, neutral_proj = pooled_output.chunk(4)
             else:
                 target_proj, positive_proj, negative_proj, neutral_proj = None, None, None, None
             

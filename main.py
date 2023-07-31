@@ -46,18 +46,17 @@ def main(config):
     amp = not config.train.amp == False
     print("weight_dtype:", weight_dtype)
 
-    tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, scheduler = load_model(config.model.input_path, sdxl)
-    
+    text_model, vae, unet, scheduler = load_model(config.model.input_path, sdxl)
+    text_model.clip_skip = default(config.model, "clip_skip", -1)
+
     # LoRAの事前マージ
     if default(config.model, "add_lora", False):
         from networks.lora import LoRANetwork
-        LoRANetwork.from_file([text_encoder,text_encoder_2], unet, config.model.add_lora, mode="merge")
+        LoRANetwork.from_file(text_model, unet, config.model.add_lora, mode="merge")
     noise_scheduler = DDPMScheduler.from_config(scheduler.config)
     vae.enable_slicing()
     latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
     print(f"vae scale factor:{latent_scale}")
-    
-    clip_skip = default(config.model, "clip_skip", -1)
         
     if default(config.train, "tome_ratio", False):
         import tomesd
@@ -76,9 +75,9 @@ def main(config):
     if hasattr(config, "network"):
         network_class = get_attr_from_config(config.network.module)
         if config.network.resume is None:
-            network = network_class([text_encoder,text_encoder_2], unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
+            network = network_class(text_model, unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
         else:
-            network = network_class.from_file([text_encoder,text_encoder_2], unet, config.network.resume)
+            network = network_class.from_file(text_model, unet, config.network.resume)
         network.train(config.network.train)
         network.requires_grad_(config.network.train)
         if config.network.train:
@@ -108,9 +107,7 @@ def main(config):
         else:
             params.append({'params': unet.parameters(), 'lr': unet_lr})
             if config.train.train_encoder:
-                if sdxl:
-                    params.append({'params': text_encoder_2.parameters(), 'lr': text_lr})
-                params.append({'params': text_encoder.parameters(), 'lr': text_lr})
+                params.append({'params': text_model.parameters(), 'lr': text_lr})
 
     # controlnetの準備
     if hasattr(config, "controlnet"):
@@ -143,11 +140,8 @@ def main(config):
     vae.eval()
     unet.requires_grad_(config.train.train_unet)
     unet.train(config.train.train_unet)
-    text_encoder.requires_grad_(config.train.train_encoder)
-    text_encoder.train(config.train.train_encoder)
-    if text_encoder_2 is not None:
-        text_encoder_2.requires_grad_(config.train.train_encoder)
-        text_encoder_2.train(config.train.train_encoder)
+    text_model.requires_grad_(config.train.train_encoder)
+    text_model.train(config.train.train_encoder)
 
     if config.feature.up_only and network is not None:
         unet.requires_grad_(False)
@@ -160,12 +154,11 @@ def main(config):
         unet.train()
         unet.enable_gradient_checkpointing()
         if config.train.train_encoder:
-            text_encoder.text_model.embeddings.requires_grad_(True)  # 先頭のモジュールが勾配有効である必要があるらしい
-            text_encoder.train() #trainがTrueである必要があるらしい
-            text_encoder.gradient_checkpointing_enable()
-            if text_encoder_2 is not None:
-                text_encoder_2.train()
-                text_encoder_2.gradient_checkpointing_enable()
+            text_model.text_encoder.text_model.embeddings.requires_grad_(True)  # 先頭のモジュールが勾配有効である必要があるらしい
+            if text_model.text_encoder_2 is not None:
+                text_model.text_encoder_2.text_model.embeddings.requires_grad_(True)
+            text_model.train() #trainがTrueである必要があるらしい
+            text_model.gradient_checkpointing_enable()
         else:
             if not config.feature.up_only:
                 unet.conv_in.requires_grad_(True)
@@ -174,9 +167,7 @@ def main(config):
         print("gradient_checkpointing を適用しました。")
 
     # 型の指定とGPUへの移動
-    text_encoder.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
-    if text_encoder_2 is not None:
-        text_encoder_2.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
+    text_model.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
     vae.to(device, dtype=weight_dtype)
     unet.to(device, dtype=torch.float32 if config.train.train_unet else weight_dtype)
     if network is not None:
@@ -190,7 +181,7 @@ def main(config):
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in config.feature.step_range.split(",")]
 
     dataset_class = get_attr_from_config(config.dataset.module)
-    dataset = dataset_class(config, tokenizer, **config.dataset.args)
+    dataset = dataset_class(config, None, **config.dataset.args)
 
     dataloader_class = get_attr_from_config(config.dataset.loader.module)
     dataloader = dataloader_class(
@@ -220,23 +211,8 @@ def main(config):
 
             b_start = time.perf_counter()
 
-            tokens = tokenizer(batch["captions"], max_length=tokenizer.model_max_length, padding="max_length",
-                               truncation=True, return_tensors='pt').input_ids.to(device)
-            if tokenizer_2 is not None:
-                tokens_2 = tokenizer_2(batch["captions"], max_length=tokenizer_2.model_max_length, padding="max_length",
-                               truncation=True, return_tensors='pt').input_ids.to(device)
-            
-            encoder_hidden_states = text_encoder(tokens, output_hidden_states=True).hidden_states[clip_skip]
-            if not sdxl:
-                encoder_hidden_states = text_encoder.text_model.final_layer_norm(encoder_hidden_states)
-            if text_encoder_2 is not None:
-                encoder_output_2 = text_encoder_2(tokens_2, output_hidden_states=True)
-                encoder_hidden_states_2 = encoder_output_2.hidden_states[clip_skip]
-                projection = encoder_output_2[0]
-                for i, prompt in enumerate(batch["captions"]):
-                    if prompt == "":
-                        projection[i] *= 0 # zero vector
-                encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=2)
+            tokens, tokens_2, empty_text = text_model.tokenize(batch["captions"])
+            encoder_hidden_states, pooled_output = text_model(tokens, tokens_2, empty_text)
 
             if 'latents' in batch: # 事前に計算した潜在変数を使う場合
                 latents = batch['latents'].to(device) * latent_scale
@@ -245,7 +221,7 @@ def main(config):
             
             if "pfg" in batch: 
                 pfg_inputs = batch["pfg"].to(device)
-                with torch.autocast("cuda", enabled=not config.train.amp == False, dtype=weight_dtype):
+                with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                     pfg_feature = pfg(pfg_inputs).to(dtype=encoder_hidden_states.dtype)
                 encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
 
@@ -260,7 +236,7 @@ def main(config):
             if sdxl:
                 size_condition = list((latents.shape[2]*8, latents.shape[3]*8) + (0, 0) + (latents.shape[2]*8, latents.shape[3]*8))
                 size_condition = torch.tensor([size_condition], dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
-                added_cond_kwargs = {"text_embeds": projection, "time_ids": size_condition}
+                added_cond_kwargs = {"text_embeds": pooled_output, "time_ids": size_condition}
             else:
                 added_cond_kwargs = None
                 
@@ -323,7 +299,7 @@ def main(config):
             progress_bar.set_postfix(logs)
 
             final = total_steps == global_steps # 最後のステップかどうか
-            save(global_steps, final, logs, batch, text_encoder, text_encoder_2, unet, vae, tokenizer, tokenizer_2, noise_scheduler, network, pfg, controlnet)
+            save(global_steps, final, logs, batch, text_model, unet, vae, noise_scheduler, network, pfg, controlnet)
             if final:
                 return
 
