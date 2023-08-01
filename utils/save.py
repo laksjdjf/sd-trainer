@@ -25,8 +25,10 @@ DIRECTORIES = [
 ]
 
 class Save:
-    def __init__(self,
+    def __init__(
+            self,
             config,
+            text_model,
             steps_per_epoch: int,
             wandb_name: str = "sd-trainer",
             image_logs: str = "image_logs",
@@ -69,7 +71,17 @@ class Save:
         self.over_write = over_write
 
         self.prompt = prompt
-        self.negative_prompt = negative_prompt
+        self.negative_prompt = negative_prompt if negative_prompt is not None else ""
+
+        # ネガティブプロンプトの事前計算
+        text_device = text_model.text_encoder.device
+        text_model.to("cuda")
+        with torch.no_grad():
+            tokens, tokens_2, empty_text = text_model.tokenize([self.negative_prompt])
+            self.uncond_hidden_state, self.uncond_pooled_output = text_model(tokens, tokens_2, empty_text)
+            self.uncond_hidden_state = self.uncond_hidden_state.detach().float().cpu()
+            self.uncond_pooled_output = None if self.uncond_pooled_output is None else self.uncond_pooled_output.detach().float().cpu()
+        text_model.to(text_device)
 
         self.seed = seed
 
@@ -77,7 +89,7 @@ class Save:
     def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None):
         if self.wandb:
             self.run.log(logs, step=steps)
-
+        
         text_encoder = text_model.text_encoder
         tokenizer = text_model.tokenizer
         text_encoder_2 = text_model.text_encoder_2
@@ -121,12 +133,34 @@ class Save:
                 pfg.save_weights(os.path.join("trained/pfg", filename + '.pt'))
 
             # 検証画像生成
+            torch.cuda.empty_cache()
+            vae_device = pipeline.vae.device
+            vae.to("cuda")
             with torch.autocast('cuda'):
                 # バッチサイズがnum_imagesより小さい場合はバッチサイズに合わせる
-                num_images = min(len(batch["captions"]), self.num_images)
+                if "encoder_hidden_states" in batch:
+                    text_embeds = (batch["encoder_hidden_states"], batch["pooled_outputs"])
+                    num_images = min(text_embeds[0].shape[0], self.num_images)
+                    prompt = ""
+                else:
+                    prompts = batch["captions"][:self.num_images] if self.prompt is None else [self.prompt] * self.num_images
+                    num_images = min(len(prompts), self.num_images)
+                    text_embeds = None
+                
                 images = []
                 for i in range(num_images):
-                    prompt = batch["captions"][i] if self.prompt is None else self.prompt
+                    
+                    if text_embeds is not None:
+                        uncond_hidden_state = self.uncond_hidden_state
+                        uncond_pooled_output = self.uncond_pooled_output.clone()
+                        encoder_hidden_states = torch.cat([text_embeds[0][i].unsqueeze(0), uncond_hidden_state]).to(unet.device, dtype=unet.dtype)
+                        pooled_outputs = torch.cat([text_embeds[1][i].unsqueeze(0), uncond_pooled_output]).to(unet.device, dtype=unet.dtype)
+                        text_embed = (encoder_hidden_states, pooled_outputs)
+                        prompt = ""
+                        
+                    else:
+                        prompt = prompts[i]
+                        text_embed = None
 
                     if pfg is not None:
                         pfg_feature = pfg(batch["pfg"][i].unsqueeze(0).to("cuda"))
@@ -138,7 +172,7 @@ class Save:
                         self.resolution = (guide_image.shape[3], guide_image.shape[2])  # width, height
                     else:
                         guide_image = None
-
+                    
                     image = pipeline.generate(
                         prompt,
                         self.negative_prompt,
@@ -148,14 +182,16 @@ class Save:
                         pfg_feature=pfg_feature,
                         controlnet=controlnet,
                         guide_image=guide_image,
+                        text_embeds=text_embed,
                         seed=self.seed + i,
                     )[0]
                     if self.wandb:
                         images.append(wandb.Image(image, caption=prompt))
                     else:
                         image.save(os.path.join(self.image_logs, f'image_log_{str(steps).zfill(6)}_{i}.png'))
-
+            vae.to(vae_device)
             if self.wandb:
                 self.run.log({'images': images}, step=steps)
 
             del pipeline
+            torch.cuda.empty_cache()

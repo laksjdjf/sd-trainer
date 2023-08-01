@@ -2,24 +2,25 @@ from PIL import Image
 import os
 import torch
 from torch.utils.data import Dataset
+from torchvision import transforms
 import json
 import random
 import numpy as np
 from transformers import CLIPTokenizer
+from utils.model import TextModel
 from typing import Optional
-
-# dataset:tokenizer, path, batch_size, minibatch_repeat, metadataを引数に取ることが必須。
-# batchは"latents"か"images"のどちらかと、"captions"が必須。
 
 class BaseDataset(Dataset):
     def __init__(
             self,
             config,
-            tokenizer: CLIPTokenizer,
+            text_model: TextModel,
             path: str,
             metadata: str,
             latent: Optional[str] = "latents",
             caption: Optional[str] = "captions",
+            image: Optional[str] = None,
+            text_emb: Optional[str] = None,
             mask: Optional[str] = None,
             pfg: Optional[str] = None,
             control: Optional[str] = None,
@@ -36,9 +37,11 @@ class BaseDataset(Dataset):
         self.batch_size = config.train.batch_size
         self.minibatch_repeat = config.feature.minibatch_repeat
         self.minibatch_size = self.batch_size // self.minibatch_repeat
-        self.tokenizer = tokenizer  # このクラスでは使っていない
+        self.text_model = text_model
         self.latent = latent
         self.caption = caption
+        self.image = image
+        self.text_emb = text_emb
         self.mask = mask
         self.pfg = pfg
         self.control = control
@@ -46,6 +49,17 @@ class BaseDataset(Dataset):
         self.prefix = prefix  # captionのprefix
         self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
         self.ucg = ucg  # captionをランダムにする空文にする確率
+
+        # 空文の埋め込みを事前に計算しておく
+        if self.ucg > 0.0 and self.text_emb:
+            text_device = self.text_model.device
+            self.text_model.to("cuda")
+            tokens, tokens_2, empty_text = self.text_model.tokenize([""])
+            with torch.no_grad():
+                self.uncond_hidden_state, self.uncond_pooled_output = self.text_model.get_text_embeddings(tokens, tokens_2, empty_text)
+            self.uncond_hidden_state.detach().float().cpu()
+            self.uncond_pooled_output.detach().float().cpu()
+            self.text_model.to(text_device)
 
         self.init_batch_samples()
 
@@ -59,11 +73,21 @@ class BaseDataset(Dataset):
         batch = {}
         samples = self.batch_samples[i]
 
-        latents = self.get_latents(samples, self.latent)
-        batch["latents"] = torch.cat([latents]*self.minibatch_repeat, dim=0)
-        captions = self.get_captions(samples, self.caption)
-        batch["captions"] = captions * self.minibatch_repeat
+        if self.image:
+            images = self.get_images(samples, self.image if isinstance(self.image, str) else "images")
+            batch["images"] = torch.cat([images]*self.minibatch_repeat, dim=0)
+        else:
+            latents = self.get_latents(samples, self.latent)
+            batch["latents"] = torch.cat([latents]*self.minibatch_repeat, dim=0)
 
+        if self.text_emb:
+            encoder_hidden_states, pooled_outputs = self.get_text_embeddings(samples, self.text_emb if isinstance(self.text_emb, str) else "text_emb")
+            batch["encoder_hidden_states"] = torch.cat([encoder_hidden_states]*self.minibatch_repeat, dim=0)
+            batch["pooled_outputs"] = torch.cat([pooled_outputs]*self.minibatch_repeat, dim=0)
+        else:
+            captions = self.get_captions(samples, self.caption)
+            batch["captions"] = captions * self.minibatch_repeat
+        
         if self.mask:
             masks = self.get_masks(samples, self.mask if isinstance(self.mask, str) else "mask")
             batch["mask"] = torch.cat([masks]*self.minibatch_repeat, dim=0)
@@ -85,6 +109,23 @@ class BaseDataset(Dataset):
                                       for i in range(0, len(self.bucket2file[key]), self.minibatch_size)])
         random.shuffle(self.batch_samples)
 
+    def get_images(self, samples, dir="images"):
+        images = []
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5])
+        ])
+
+        for sample in samples:
+            image = Image.open(os.path.join(self.path, dir, sample + ".png")).convert("RGB")
+            image = transform(image)
+            image = image.permute(2, 0, 1)
+            images.append(image)
+
+        images = torch.stack(images)
+        images = images.to(memory_format=torch.contiguous_format).float()
+        return images
+        
     def get_latents(self, samples, dir="latents"):
         latents = torch.stack([torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npy"))) for sample in samples])
         latents = latents.to(memory_format=torch.contiguous_format).float()  # これなに
@@ -103,6 +144,25 @@ class BaseDataset(Dataset):
                 caption = ""
             captions.append(caption)
         return captions
+    
+    def get_text_embeddings(self, samples, dir="text_emb"):
+        if random.random() < self.ucg:
+            encoder_hidden_states = self.uncond_hidden_state.repeat(len(samples), 1, 1)
+            pooled_outputs = self.uncond_pooled_output.repeat(len(samples), 1)
+            return encoder_hidden_states, pooled_outputs
+
+        encoder_hidden_states = torch.stack([
+            torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["encoder_hidden_state"])
+            for sample in samples
+        ])
+        encoder_hidden_states.to(memory_format=torch.contiguous_format).float()
+        
+        pooled_outputs = torch.stack([
+            torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["pooled_output"])
+            for sample in samples
+        ])
+        pooled_outputs.to(memory_format=torch.contiguous_format).float()
+        return encoder_hidden_states, pooled_outputs
 
     def get_masks(self, samples, dir="mask"):
         masks = torch.stack([

@@ -32,6 +32,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         pil_images = [Image.fromarray(image) for image in images]
         return pil_images
 
+    @torch.no_grad()
     def generate(
         self,
         prompts,
@@ -44,6 +45,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         pfg_feature: torch.Tensor = None,
         controlnet=None,
         guide_image=None,
+        text_embed=None,
         seed=4545,
     ):
         
@@ -62,8 +64,10 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
             negative_prompts = negative_prompts * len(prompts)
 
         assert len(prompts) == len(negative_prompts), "プロンプトとネガティブプロンプトの数が一致していません"
-
-        encoder_hidden_state = self.encode_prompts(prompts+negative_prompts, clip_skip)
+        if text_embed is not None:
+            encoder_hidden_state, _ = text_embed
+        else:
+            encoder_hidden_state = self.encode_prompts(prompts+negative_prompts, clip_skip)
 
         if pfg_feature is not None:
             cond, uncond = encoder_hidden_state.chunk(2)
@@ -76,10 +80,10 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
                                uncond.shape[2]).to(uncond.device, dtype=uncond.dtype)], dim=1)
             encoder_hidden_state = torch.cat([cond, uncond], dim=0)
 
-        self.scheduler.set_timesteps(num_inference_steps, device=self.device)
+        self.scheduler.set_timesteps(num_inference_steps, device="cuda")
         timesteps = self.scheduler.timesteps
 
-        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device=self.device)
+        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device="cuda")
         latents = latents * self.scheduler.init_noise_sigma
 
         progress_bar = tqdm(range(num_inference_steps), desc="Total Steps", leave=False)
@@ -149,7 +153,8 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
         images = (images * 255).round().astype("uint8")
         pil_images = [Image.fromarray(image) for image in images]
         return pil_images
-
+    
+    @torch.no_grad()
     def generate(
         self,
         prompts,
@@ -162,6 +167,7 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
         pfg_feature: torch.Tensor = None,
         controlnet=None,
         guide_image=None,
+        text_embeds=None,
         seed=4545,
     ):
         
@@ -180,8 +186,10 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
             negative_prompts = negative_prompts * len(prompts)
 
         assert len(prompts) == len(negative_prompts), "プロンプトとネガティブプロンプトの数が一致していません"
-
-        encoder_hidden_state, projection = self.encode_prompts(prompts+negative_prompts, clip_skip)
+        if text_embeds is not None:
+            encoder_hidden_state, projection = text_embeds
+        else:
+            encoder_hidden_state, projection = self.encode_prompts(prompts+negative_prompts, clip_skip)
 
         if pfg_feature is not None:
             cond, uncond = encoder_hidden_state.chunk(2)
@@ -194,10 +202,10 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
                                uncond.shape[2]).to(uncond.device, dtype=uncond.dtype)], dim=1)
             encoder_hidden_state = torch.cat([cond, uncond], dim=0)
 
-        self.scheduler.set_timesteps(num_inference_steps, device=self.device)
+        self.scheduler.set_timesteps(num_inference_steps, device="cuda")
         timesteps = self.scheduler.timesteps
 
-        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device=self.device)
+        latents = torch.randn((len(prompts), 4, height // 8, width // 8), device="cuda")
         latents = latents * self.scheduler.init_noise_sigma
 
         size_condition = list((height, width) + (0, 0) + (height, width))
@@ -220,7 +228,6 @@ class WrapStableDiffusionXLPipeline(StableDiffusionXLPipeline):
                 )
             else:
                 down_block_res_samples, mid_block_res_sample = None, None
-
             with torch.no_grad():
                 noise_pred = self.unet(
                     latent_model_input, t, encoder_hidden_states=encoder_hidden_state,

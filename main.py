@@ -12,7 +12,7 @@ from accelerate.utils import set_seed
 from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
-from utils.model import load_model
+from utils.model import load_model, patch_mid_block_checkpointing
 
 # データローダー用の関数
 def collate_fn(x):
@@ -41,36 +41,51 @@ def main(config):
     text_lr, unet_lr = float(lrs[0]), float(lrs[-1])  # 長さが1の場合同じ値になる
     print("text_lr:", text_lr, "unet_lr:", unet_lr)
 
-    device = torch.device('cuda')
+    device = torch.device('cuda') # 訓練デバイス
+    vae_device = torch.device('cpu') if default(config.train, "vae_offload", False) else torch.device('cuda')
+    text_encoder_device = torch.device('cpu') if default(config.train, "text_encoder_offload", False) else torch.device('cuda')
+    
+    # 学習対象以外の型
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
-    amp = not config.train.amp == False
+    
+    full_bf16 = default(config.train, "full_bf16", False)
+    if full_bf16:
+        assert weight_dtype == torch.bfloat16, "full_bf16を使う場合、amp: bfloat16を設定してください。"
+    
+    train_dtype = weight_dtype if full_bf16 else torch.float32 # 学習対象や勾配の型
+    
+    amp = (not config.train.amp == False) and not full_bf16
+    
     print("weight_dtype:", weight_dtype)
+    print("train_dtype:", train_dtype)
 
     text_model, vae, unet, scheduler = load_model(config.model.input_path, sdxl)
     text_model.clip_skip = default(config.model, "clip_skip", -1)
+    
+    vae.enable_slicing()
+    latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
+    print(f"vae scale factor:{latent_scale}")
+
+    noise_scheduler = DDPMScheduler.from_config(scheduler.config)
 
     # LoRAの事前マージ
     if default(config.model, "add_lora", False):
         from networks.lora import LoRANetwork
         LoRANetwork.from_file(text_model, unet, config.model.add_lora, mode="merge")
-    noise_scheduler = DDPMScheduler.from_config(scheduler.config)
-    vae.enable_slicing()
-    latent_scale = 0.13025 if sdxl else 0.18215 # いずれvaeのconfigから取得するようにしたい
-    print(f"vae scale factor:{latent_scale}")
-        
+
     if default(config.train, "tome_ratio", False):
         import tomesd
         tomesd.apply_patch(unet, ratio=config.train.tome_ratio)
         print(f"tomeを適用しました。ratio={config.train.tome_ratio}")
-       
+
     if config.train.use_xformers:
         unet.set_use_memory_efficient_attention_xformers(True)
         print("xformersを適用しました。")
 
-    # ampの設定、config.train.ampがFalseなら無効
     scaler = torch.cuda.amp.GradScaler(enabled=amp)
 
     params = []  # optimizerに入れるパラメータを格納するリスト
+
     # networkの準備
     if hasattr(config, "network"):
         network_class = get_attr_from_config(config.network.module)
@@ -140,10 +155,10 @@ def main(config):
     vae.eval()
     unet.requires_grad_(config.train.train_unet)
     unet.train(config.train.train_unet)
-    text_model.requires_grad_(config.train.train_encoder)
-    text_model.train(config.train.train_encoder)
+    text_model.requires_grad_(config.train.train_encoder and network is None)
+    text_model.train(config.train.train_encoder and network is None)
 
-    if config.feature.up_only and network is not None:
+    if config.feature.up_only and network is None:
         unet.requires_grad_(False)
         unet.eval()
         unet.up_blocks.requires_grad_(True)
@@ -153,6 +168,7 @@ def main(config):
     if config.train.gradient_checkpointing:
         unet.train()
         unet.enable_gradient_checkpointing()
+        patch_mid_block_checkpointing(unet.mid_block)
         if config.train.train_encoder:
             text_model.text_encoder.text_model.embeddings.requires_grad_(True)  # 先頭のモジュールが勾配有効である必要があるらしい
             if text_model.text_encoder_2 is not None:
@@ -167,21 +183,21 @@ def main(config):
         print("gradient_checkpointing を適用しました。")
 
     # 型の指定とGPUへの移動
-    text_model.to(device, dtype=torch.float32 if config.train.train_encoder else weight_dtype)
-    vae.to(device, dtype=weight_dtype)
-    unet.to(device, dtype=torch.float32 if config.train.train_unet else weight_dtype)
+    text_model.to(text_encoder_device, dtype=train_dtype if config.train.train_encoder else weight_dtype)
+    vae.to(vae_device, dtype=weight_dtype)
+    unet.to(device, dtype=train_dtype if config.train.train_unet else weight_dtype)
     if network is not None:
-        network.to(device, dtype=torch.float32 if config.network.train else weight_dtype)
+        network.to(device, dtype=train_dtype if config.network.train else weight_dtype)
     if pfg is not None:
-        pfg.to(device, dtype=torch.float32 if config.pfg.train else weight_dtype)
+        pfg.to(device, dtype=train_dtype if config.pfg.train else weight_dtype)
     if controlnet is not None:
-        controlnet.to(device, dtype=torch.float32 if config.controlnet.train else weight_dtype)
+        controlnet.to(device, dtype=train_dtype if config.controlnet.train else weight_dtype)
 
     # sampling stepの範囲を指定
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in config.feature.step_range.split(",")]
 
     dataset_class = get_attr_from_config(config.dataset.module)
-    dataset = dataset_class(config, None, **config.dataset.args)
+    dataset = dataset_class(config, text_model, **config.dataset.args)
 
     dataloader_class = get_attr_from_config(config.dataset.loader.module)
     dataloader = dataloader_class(
@@ -198,7 +214,7 @@ def main(config):
     )
 
     save_module = get_attr_from_config(config.save.module)
-    save = save_module(config, step_per_epoch, **config.save.args)
+    save = save_module(config, text_model, step_per_epoch, **config.save.args)
 
     global_steps = 0
 
@@ -206,21 +222,24 @@ def main(config):
     loss_ema = None  # 訓練ロスの指数平均
 
     # ミニバッチリピートがnだと1回のループでnエポック進む扱い。
-    for epoch in range(0, config.train.epochs, config.feature.minibatch_repeat):
+    for _ in range(0, config.train.epochs, config.feature.minibatch_repeat):
         for batch in dataloader:
-
             b_start = time.perf_counter()
 
-            tokens, tokens_2, empty_text = text_model.tokenize(batch["captions"])
-            encoder_hidden_states, pooled_output = text_model(tokens, tokens_2, empty_text)
+            if 'encoder_hidden_states' in batch:
+                encoder_hidden_states = batch["encoder_hidden_states"].to(device, dtype=train_dtype)
+                pooled_output = batch["pooled_outputs"].to(device, dtype=train_dtype)
+            else:
+                tokens, tokens_2, empty_text = text_model.tokenize(batch["captions"])
+                encoder_hidden_states, pooled_output = text_model(tokens, tokens_2, empty_text)
 
             if 'latents' in batch: # 事前に計算した潜在変数を使う場合
-                latents = batch['latents'].to(device) * latent_scale
+                latents = batch['latents'].to(device, dtype=train_dtype) * latent_scale
             else:
                 latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * latent_scale
             
             if "pfg" in batch: 
-                pfg_inputs = batch["pfg"].to(device)
+                pfg_inputs = batch["pfg"].to(device, dtype=weight_dtype)
                 with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                     pfg_feature = pfg(pfg_inputs).to(dtype=encoder_hidden_states.dtype)
                 encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
@@ -252,7 +271,7 @@ def main(config):
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
-                        controlnet_cond=batch["control"].to(latents.device),
+                        controlnet_cond=batch["control"].to(latents.device, dtype=latents.dtype),
                         return_dict=False,
                     )
                 else:
@@ -271,8 +290,7 @@ def main(config):
                 noise = noise_scheduler.get_velocity(latents, noise, timesteps)
 
             if "mask" in batch:
-                mask = batch["mask"].to(device)
-
+                mask = batch["mask"].to(device, dtype = latents.dtype)
                 noise = noise * mask
                 noise_pred = noise_pred * mask
 
