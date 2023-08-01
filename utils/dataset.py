@@ -119,7 +119,6 @@ class BaseDataset(Dataset):
         for sample in samples:
             image = Image.open(os.path.join(self.path, dir, sample + ".png")).convert("RGB")
             image = transform(image)
-            image = image.permute(2, 0, 1)
             images.append(image)
 
         images = torch.stack(images)

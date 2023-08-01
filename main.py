@@ -238,7 +238,7 @@ def main(config):
             if 'latents' in batch: # 事前に計算した潜在変数を使う場合
                 latents = batch['latents'].to(device, dtype=train_dtype) * latent_scale
             else:
-                latents = vae.encode(batch['image'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * latent_scale
+                latents = vae.encode(batch['images'].to(device, dtype=weight_dtype)).latent_dist.sample().to(device) * latent_scale
             
             if "pfg" in batch: 
                 pfg_inputs = batch["pfg"].to(device, dtype=weight_dtype)
