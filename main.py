@@ -220,6 +220,8 @@ def main(config):
 
     progress_bar = tqdm(range(total_steps), desc="Total Steps", leave=False)
     loss_ema = None  # 訓練ロスの指数平均
+    
+    torch.cuda.empty_cache()
 
     # ミニバッチリピートがnだと1回のループでnエポック進む扱い。
     for _ in range(0, config.train.epochs, config.feature.minibatch_repeat):
