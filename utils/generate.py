@@ -45,7 +45,7 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
         pfg_feature: torch.Tensor = None,
         controlnet=None,
         guide_image=None,
-        text_embed=None,
+        text_embeds=None,
         seed=4545,
     ):
         
@@ -64,8 +64,8 @@ class WrapStableDiffusionPipeline(StableDiffusionPipeline):
             negative_prompts = negative_prompts * len(prompts)
 
         assert len(prompts) == len(negative_prompts), "プロンプトとネガティブプロンプトの数が一致していません"
-        if text_embed is not None:
-            encoder_hidden_state, _ = text_embed
+        if text_embeds is not None:
+            encoder_hidden_state, _ = text_embeds
         else:
             encoder_hidden_state = self.encode_prompts(prompts+negative_prompts, clip_skip)
 
