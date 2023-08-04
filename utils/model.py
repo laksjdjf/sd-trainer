@@ -6,9 +6,6 @@ import torch.nn as nn
 from typing import Optional, Dict, Any
 import random
 
-EOS_TOKEN_ID = 49407
-
-
 def load_model(path, sdxl=False):
     if sdxl:
         if os.path.isfile(path):
@@ -166,8 +163,10 @@ class TextModel(nn.Module):
         encoder_hidden_states, pooled_output = self.forward(tokens, tokens_2, empty_text)
         return encoder_hidden_states, pooled_output
 
-    def prepare_textual_inversion(self, initial_token, target_token, mode="style", initial_file=None):
-        self.target_token = target_token
+    def prepare_textual_inversion(self, initial_token, target_token, num_tokens=1, mode="style", initial_file=None):
+        self.num_tokens = num_tokens
+        self.target_tokens = [target_token] + [target_token + str(i) for i in range(1,num_tokens)]
+        self.target_token = " ".join(self.target_tokens)
         if mode == "style":
             self.textual_inversion_template = imagenet_style_templates_small
         elif mode == "object":
@@ -182,18 +181,20 @@ class TextModel(nn.Module):
         
         self.token_embeds_list = []
         for tokenizer, text_encoder, init_emb in zip(self.tokenizer_list, self.text_encoder_list, init_embs):
-            tokenizer.add_tokens([target_token])  # トークンを追加
-            text_encoder.resize_token_embeddings(len(tokenizer))  # embeddingを更新
+            add_tokens = tokenizer.add_tokens(self.target_tokens)  # トークンを追加
+            assert add_tokens == num_tokens, "既に登録されているトークンは使えません"
 
+            text_encoder.resize_token_embeddings(len(tokenizer))  # embeddingを更新
             init_token_id = (tokenizer.convert_tokens_to_ids([initial_token]))[0]
             assert init_token_id != tokenizer.eos_token_id, "init tokenが1トークンではありません。"
 
             token_embeds = text_encoder.get_input_embeddings().weight.data
-            if init_emb is None:
-                token_embeds[-1] = token_embeds[init_token_id]
-            else:
-                token_embeds[-1] = init_emb[0]
-            self.token_embeds_list.append(token_embeds)
+            for i in range(num_tokens):
+                if init_emb is None:
+                    token_embeds[-(i+1)] = token_embeds[init_token_id]
+                else:
+                    token_embeds[-(i+1)] = init_emb[-(i+1)]
+            self.token_embeds_list.append(token_embeds.detach().clone())
         print("Textual Inversion用に新しいトークンが追加されました。")
         self.textual_inversion = True
 
@@ -205,7 +206,7 @@ class TextModel(nn.Module):
     @torch.no_grad()
     def reset_unupdate_embedding(self):
         for i, text_encoder in enumerate(self.text_encoder_list):
-            text_encoder.get_input_embeddings().weight[:-2] = self.token_embeds_list[i][:-2]
+            text_encoder.get_input_embeddings().weight[:-(self.num_tokens+1)] = self.token_embeds_list[i][:-(self.num_tokens+1)]
 
     def set_textual_inversion_mode(self):
         text_encoder_list = [self.text_encoder] if not self.sdxl else [self.text_encoder, self.text_encoder_2]
@@ -225,11 +226,11 @@ class TextModel(nn.Module):
     def save_embeddings(self, file, save_dtype=torch.float32):
         if self.sdxl:
             state_dict = {
-                "clip_l": self.text_encoder.get_input_embeddings().weight[-2].unsqueeze(0),
-                "clip_g": self.text_encoder_2.get_input_embeddings().weight[-2].unsqueeze(0)
+                "clip_l": self.text_encoder.get_input_embeddings().weight[-self.num_tokens:],
+                "clip_g": self.text_encoder_2.get_input_embeddings().weight[-self.num_tokens:]
             }
         else:
-            state_dict = {"emb_params": self.text_encoder.get_input_embeddings().weight[-2].unsqueeze(0)}
+            state_dict = {"emb_params": self.text_encoder.get_input_embeddings().weight[-self.num_tokens:]}
 
         if save_dtype is not None:
             for key in list(state_dict.keys()):
