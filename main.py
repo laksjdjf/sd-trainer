@@ -42,8 +42,6 @@ def main(config):
     print("text_lr:", text_lr, "unet_lr:", unet_lr)
 
     device = torch.device('cuda') # 訓練デバイス
-    vae_device = torch.device('cpu') if default(config.train, "vae_offload", False) else torch.device('cuda')
-    text_encoder_device = torch.device('cpu') if default(config.train, "text_encoder_offload", False) else torch.device('cuda')
     
     # 学習対象以外の型
     weight_dtype = torch.bfloat16 if config.train.amp == 'bfloat16' else torch.float16 if config.train.amp else torch.float32
@@ -142,6 +140,15 @@ def main(config):
     else:
         controlnet = None
 
+    # textual inversionの準備
+    if hasattr(config, "textual_inversion"):
+        textual_inversion = True
+        text_model.prepare_textual_inversion(**config.textual_inversion.args)
+        for param in text_model.get_textual_inversion_params():
+            params.append({'params': param, 'lr': text_lr})
+    else:
+        textual_inversion = False
+
     # 最適化関数の設定
     optimizer_class = get_attr_from_config(config.optimizer.module)
     if hasattr(config.optimizer, "args"):
@@ -155,8 +162,11 @@ def main(config):
     vae.eval()
     unet.requires_grad_(config.train.train_unet)
     unet.train(config.train.train_unet)
-    text_model.requires_grad_(config.train.train_encoder and network is None)
-    text_model.train(config.train.train_encoder and network is None)
+    if textual_inversion:
+        text_model.set_textual_inversion_mode()
+    else:
+        text_model.requires_grad_(config.train.train_encoder and network is None)
+        text_model.train(config.train.train_encoder and network is None)
 
     if config.feature.up_only and network is None:
         unet.requires_grad_(False)
@@ -183,7 +193,9 @@ def main(config):
         print("gradient_checkpointing を適用しました。")
 
     # 型の指定とGPUへの移動
-    text_model.to(text_encoder_device, dtype=train_dtype if config.train.train_encoder else weight_dtype)
+    vae_device = torch.device('cpu') if default(config.train, "vae_offload", False) else device
+    text_encoder_device = torch.device('cpu') if default(config.train, "text_encoder_offload", False) else device
+    text_model.to(text_encoder_device, dtype=train_dtype if (config.train.train_encoder or textual_inversion) else weight_dtype)
     vae.to(vae_device, dtype=weight_dtype)
     unet.to(device, dtype=train_dtype if config.train.train_unet else weight_dtype)
     if network is not None:
@@ -308,6 +320,9 @@ def main(config):
             scaler.update()
             lr_scheduler.step()
             optimizer.zero_grad()
+
+            if textual_inversion:
+                text_model.reset_unupdate_embedding()
 
             global_steps += 1
 
