@@ -21,7 +21,8 @@ DIRECTORIES = [
     "trained/models",
     "trained/networks",
     "trained/pfg",
-    "trained/controlnet"
+    "trained/controlnet",
+    "trained/embeddings",
 ]
 
 class Save:
@@ -131,6 +132,9 @@ class Save:
 
             if pfg is not None and self.config.pfg.train:
                 pfg.save_weights(os.path.join("trained/pfg", filename + '.pt'))
+            
+            if text_model.textual_inversion:
+                text_model.save_embeddings(os.path.join("trained/embeddings", filename))
 
             # 検証画像生成
             torch.cuda.empty_cache()
