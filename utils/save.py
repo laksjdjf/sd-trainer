@@ -1,8 +1,6 @@
 import torch
 import os
-from diffusers import AutoencoderKL, UNet2DConditionModel
-from transformers import CLIPTextModel, CLIPTokenizer
-from utils.generate import WrapStableDiffusionPipeline, WrapStableDiffusionXLPipeline
+from utils.generate import StableDiffusionGenerator
 import wandb
 
 # Saveクラス：
@@ -74,6 +72,8 @@ class Save:
         self.prompt = prompt
         self.negative_prompt = negative_prompt if negative_prompt is not None else ""
 
+        self.sdxl = text_model.text_encoder_2 is not None
+
         # ネガティブプロンプトの事前計算
         text_device = text_model.text_encoder.device
         text_model.to("cuda")
@@ -90,34 +90,15 @@ class Save:
     def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None):
         if self.wandb:
             self.run.log(logs, step=steps)
-        
-        text_encoder = text_model.text_encoder
-        tokenizer = text_model.tokenizer
-        text_encoder_2 = text_model.text_encoder_2
-        tokenizer_2 = text_model.tokenizer_2
             
         if steps % self.save_n_steps == 0 or final:
             print(f'チェックポイントをセーブするよ!')
-            if text_encoder_2 is not None:
-                pipeline = WrapStableDiffusionXLPipeline(
-                    text_encoder=text_encoder,
-                    text_encoder_2=text_encoder_2,
-                    vae=vae,
-                    unet=unet,
-                    tokenizer=tokenizer,
-                    tokenizer_2=tokenizer_2,
-                    scheduler=scheduler,
-                )
-            else:
-                pipeline = WrapStableDiffusionPipeline(
-                    text_encoder=text_encoder,
-                    vae=vae,
-                    unet=unet,
-                    tokenizer=tokenizer,
-                    scheduler=scheduler,
-                    feature_extractor=None,
-                    safety_checker=None
-                )
+            pipeline = StableDiffusionGenerator(
+                unet=unet,
+                vae=vae,
+                text_model=text_model,
+                scheduler_config=scheduler.config,
+            )
 
             filename = f"{self.output}" if self.over_write else f"{self.output}_{steps}"
 
@@ -153,15 +134,13 @@ class Save:
                 
                 images = []
                 for i in range(num_images):
-                    
                     if text_embeds is not None:
-                        uncond_hidden_state = self.uncond_hidden_state
+                        uncond_hidden_state = self.uncond_hidden_state.clone()
                         uncond_pooled_output = self.uncond_pooled_output.clone()
                         encoder_hidden_states = torch.cat([text_embeds[0][i].unsqueeze(0), uncond_hidden_state]).to(unet.device, dtype=unet.dtype)
                         pooled_outputs = torch.cat([text_embeds[1][i].unsqueeze(0), uncond_pooled_output]).to(unet.device, dtype=unet.dtype)
                         text_embed = (encoder_hidden_states, pooled_outputs)
                         prompt = ""
-                        
                     else:
                         prompt = prompts[i]
                         text_embed = None
@@ -180,7 +159,6 @@ class Save:
                     image = pipeline.generate(
                         prompt,
                         self.negative_prompt,
-                        clip_skip=self.clip_skip,
                         width=self.resolution[0],
                         height=self.resolution[1],
                         pfg_feature=pfg_feature,
