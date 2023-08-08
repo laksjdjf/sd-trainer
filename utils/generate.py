@@ -82,7 +82,7 @@ class StableDiffusionGenerator:
         if text_embeds is not None:
             encoder_hidden_state, pooled_output = text_embeds
         else:
-            encoder_hidden_state, _ = self.encode_prompts(prompts+negative_prompts)
+            encoder_hidden_state, pooled_output = self.encode_prompts(prompts+negative_prompts)
 
         if pfg_feature is not None:
             cond, uncond = encoder_hidden_state.chunk(2)
