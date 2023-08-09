@@ -52,6 +52,7 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + ControlNetの学習
 + PFGの学習
 + LECOの学習
++ Textual Inversion
 + wandbによるログチェック
 + 設定ファイルからOptimizerを自由に選べる
 + データセット、セーブ機能の拡張性（クラスの定義のみで使えるはず）
@@ -69,9 +70,7 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 実装してない機能
 + Dreambooth（データセットを継承すれば割と簡単に実装できそうな気がする）
 + hypernetworks
-+ Textual Inversion
-+ Latentをcacheしないで学習（訓練ループ自体には機能がありますが、対応するデータセットがない）
-+ データ拡張（Latentにしてしまうためありません。）
++ データ拡張
 + トークン長の拡張（個人的に学習段階でトークン長の拡張を行うのはよくないと思うのですがどうでしょうか。）
 
 実装したい機能
