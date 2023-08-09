@@ -244,9 +244,7 @@ def main(config):
                 encoder_hidden_states = batch["encoder_hidden_states"].to(device, dtype=train_dtype)
                 pooled_output = batch["pooled_outputs"].to(device, dtype=train_dtype)
             else:
-                tokens, tokens_2, empty_text = text_model.tokenize(batch["captions"])
-                encoder_hidden_states, pooled_output = text_model(tokens, tokens_2, empty_text)
-
+                encoder_hidden_states, pooled_output = text_model.encode_text(batch["captions"])
             if 'latents' in batch: # 事前に計算した潜在変数を使う場合
                 latents = batch['latents'].to(device, dtype=train_dtype) * latent_scale
             else:

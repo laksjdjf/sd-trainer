@@ -20,7 +20,7 @@ def load_model(path, sdxl=False):
             text_model = TextModel(tokenizer, tokenizer_2, text_encoder, text_encoder_2)
             del pipe
         else:
-            text_model = TextModel.from_pretrained(path)
+            text_model = TextModel.from_pretrained(path, sdxl=True)
             unet = UNet2DConditionModel.from_pretrained(path, subfolder='unet')
             vae = AutoencoderKL.from_pretrained(path, subfolder='vae')
             scheduler = DDPMScheduler.from_pretrained(path, subfolder='scheduler')
@@ -280,7 +280,13 @@ class TextModel(nn.Module):
             tokenizer_2 = None
             text_encoder_2 = None
         return cls(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)
-
+    
+    def save_pretrained(self, save_directory):
+        self.text_encoder.save_pretrained(os.path.join(save_directory, "text_encoder"))
+        self.tokenizer.save_pretrained(os.path.join(save_directory, "tokenizer"))
+        if self.sdxl:
+            self.text_encoder_2.save_pretrained(os.path.join(save_directory, "text_encoder_2"))
+            self.tokenizer_2.save_pretrained(os.path.join(save_directory, "tokenizer_2"))
 
 def patch_mid_block_checkpointing(mid_block):
 
