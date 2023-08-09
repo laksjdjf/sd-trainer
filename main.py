@@ -265,8 +265,7 @@ def main(config):
             bsz = latents.shape[0]
 
             if sdxl:
-                size_condition = list((latents.shape[2]*8, latents.shape[3]*8) + (0, 0) + (latents.shape[2]*8, latents.shape[3]*8))
-                size_condition = torch.tensor([size_condition], dtype=latents.dtype, device=latents.device).repeat(bsz, 1)
+                size_condition = batch["size_condition"].to(latents.device, dtype=latents.dtype)
                 added_cond_kwargs = {"text_embeds": pooled_output, "time_ids": size_condition}
             else:
                 added_cond_kwargs = None
