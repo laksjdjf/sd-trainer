@@ -86,7 +86,7 @@ def main():
             else:
                 with open(os.path.join(path, file_names[j] + ".txt"),"r") as f:
                     caption = f.read()
-                with open(os.path.join(output_path, file_names[j] + ".caption"),"w") as f:
+                with open(os.path.join(output_path, file_names[j] + ".txt"),"w") as f:
                     f.write(caption[:-1] + ', "tagger": "' + tags + '"}')
 
 if __name__ == "__main__":
