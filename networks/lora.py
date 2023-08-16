@@ -29,11 +29,14 @@ def load(file):
 def get_rank_and_alpha_from_state_dict(state_dict):
     modules_rank = {}
     modules_alpha = {}
+    ema = False
     for key, value in state_dict.items():
         if "." not in key:
             continue
 
         lora_name = key.split(".")[0]
+        if "ema" in key:
+            ema = True
         if "alpha" in key:
             modules_alpha[lora_name] = value
         elif "lora_down" in key:
@@ -45,7 +48,7 @@ def get_rank_and_alpha_from_state_dict(state_dict):
         if key not in modules_alpha:
             modules_alpha[key] = modules_rank[key]
 
-    return modules_rank, modules_alpha
+    return modules_rank, modules_alpha, ema
 
 
 class LoRAModule(torch.nn.Module):
@@ -57,8 +60,9 @@ class LoRAModule(torch.nn.Module):
         self.lora_name = lora_name
         self.lora_rank = lora_rank
         self.forward_mode = forward_mode
+        self.ema = False
 
-        if org_module.__class__.__name__ == 'Linear':
+        if 'Linear' in org_module.__class__.__name__:
             in_dim = org_module.in_features
             out_dim = org_module.out_features
             if lora_rank == "dynamic":
@@ -71,7 +75,7 @@ class LoRAModule(torch.nn.Module):
             self.extra_args = {}
             kernel_size = (1, 1) # 便宜上の定義
 
-        elif org_module.__class__.__name__ == 'Conv2d':
+        elif 'Conv' in org_module.__class__.__name__:
             in_dim = org_module.in_channels
             out_dim = org_module.out_channels
 
@@ -139,6 +143,23 @@ class LoRAModule(torch.nn.Module):
         org_sd["weight"] = weight
         self.org_module[0].load_state_dict(org_sd)
 
+    def update_ema(self, decay=0.999):
+        self.decay = decay
+        if not hasattr(self,"ema_up"):
+            self.register_buffer('ema_up', self.lora_up.weight.detach())
+            self.register_buffer('ema_down', self.lora_down.weight.detach())
+        else:
+            self.ema_up = self.ema_up * decay + self.lora_up.weight * (1 - decay)
+            self.ema_down = self.ema_down * decay + self.lora_down.weight * (1 - decay)
+
+    def lora_forward(self, x):
+        if self.ema:
+            x = self.op(x, self.ema_down, **self.extra_args)
+            x = self.op(x, self.ema_up)
+            return x * self.multiplier * self.scale
+        else:
+            return self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+
     def restore_from(self, multiplier=None):
         self.merge_to(multiplier=multiplier, sign=-1)
 
@@ -146,8 +167,12 @@ class LoRAModule(torch.nn.Module):
         if multiplier is None:
             multiplier = self.multiplier
 
-        up_weight = self.lora_up.weight# out_dim, rank, [1, 1]
-        down_weight = self.lora_down.weight # rank, in_dim, [kernel, kernel]
+        if self.ema:
+            up_weight = self.ema_up
+            down_weight = self.ema_down
+        else:
+            up_weight = self.lora_up.weight# out_dim, rank, [1, 1]
+            down_weight = self.lora_down.weight # rank, in_dim, [kernel, kernel]
         
         lora_weight = up_weight.view(-1, self.lora_rank) @ down_weight.view(self.lora_rank, -1)  # out_dim, in_dim*kernel*kernel
         lora_weight = lora_weight.view(self.shape)  # out_dim, in_dim, [kernel, kernel]
@@ -170,7 +195,7 @@ class LoRAModule(torch.nn.Module):
                     weight = self.get_weight() + self.org_module[0].weight
                     bias = None if self.org_module[0].bias is None else self.org_module[0].bias
                     return self.op(x, weight, bias, **self.extra_args)
-            return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+            return self.org_forward(x) + self.lora_forward(x)
 
 class LoRANetwork(torch.nn.Module):
     def __init__(
@@ -188,6 +213,7 @@ class LoRANetwork(torch.nn.Module):
         mode="apply",  # "apply" or "merge"
         forward_mode=None,  # None or "merge"
         state_dict=None,
+        ema=False,
     ) -> None:
 
         super().__init__()
@@ -244,6 +270,9 @@ class LoRANetwork(torch.nn.Module):
         # loraを適用する
         for lora in self.text_encoder_loras + self.unet_loras:
             self.add_module(lora.lora_name, lora)
+        
+        if ema:
+            self.update_ema()
 
         if state_dict is not None:
             self.load_state_dict(state_dict, False)
@@ -256,9 +285,9 @@ class LoRANetwork(torch.nn.Module):
     @classmethod
     def from_file(cls, text_model, unet, path, multiplier=1.0, module=None, mode="apply"):
         state_dict = load(path)
-        modules_rank, modules_alpha = get_rank_and_alpha_from_state_dict(state_dict)
+        modules_rank, modules_alpha, ema = get_rank_and_alpha_from_state_dict(state_dict)
         network = cls(text_model, unet, False, True, rank=modules_rank, alpha=modules_alpha,
-                      multiplier=multiplier, module=module, mode=mode, state_dict=state_dict)
+                      multiplier=multiplier, module=module, mode=mode, state_dict=state_dict, ema=ema)
         return network
 
     def apply_to(self, multiplier=None):
@@ -277,13 +306,17 @@ class LoRANetwork(torch.nn.Module):
         for lora in self.text_encoder_loras + self.unet_loras:
             lora.restore_from(multiplier)
 
+    def update_ema(self, decay=0.999):
+        for lora in self.text_encoder_loras + self.unet_loras:
+            lora.update_ema(decay)
+
     def create_modules(self, prefix, root_module: torch.nn.Module, target_replace_modules, modules_rank=None, modules_alpha=1.0) -> list:
         loras = []
         is_dict = isinstance(modules_rank, dict)
         for name, module in root_module.named_modules():
             if module.__class__.__name__ in target_replace_modules and self.target_block in name:
                 for child_name, child_module in module.named_modules():
-                    if child_module.__class__.__name__ in ["Linear", "Conv2d"]:
+                    if child_module.__class__.__name__ in ["Linear", "Conv2d", "LoRACompatibleLinear", "LoRACompatibleConv"]:
                         lora_name = prefix + '.' + name + '.' + child_name
                         lora_name = lora_name.replace('.', '_')
                         if is_dict:
@@ -352,3 +385,11 @@ class LoRANetwork(torch.nn.Module):
         yield
         for lora in self.text_encoder_loras + self.unet_loras:
             lora.multiplier = 1.0
+
+    @contextlib.contextmanager
+    def set_temporary_ema(self):
+        for lora in self.text_encoder_loras + self.unet_loras:
+            lora.ema = True
+        yield
+        for lora in self.text_encoder_loras + self.unet_loras:
+            lora.ema = False

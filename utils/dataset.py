@@ -17,6 +17,7 @@ class BaseDataset(Dataset):
             text_model: TextModel,
             path: str,
             metadata: str,
+            original_size: Optional[str] = None,
             latent: Optional[str] = "latents",
             caption: Optional[str] = "captions",
             image: Optional[str] = None,
@@ -32,6 +33,12 @@ class BaseDataset(Dataset):
 
         with open(os.path.join(path, metadata), "r") as f:
             self.bucket2file = json.load(f)
+
+        if original_size is not None:
+            with open(os.path.join(path, original_size), "r") as f:
+                self.original_size = json.load(f)
+        else:
+            self.original_size = {}
 
         self.path = path
         self.batch_size = config.train.batch_size
@@ -76,9 +83,13 @@ class BaseDataset(Dataset):
         if self.image:
             images = self.get_images(samples, self.image if isinstance(self.image, str) else "images")
             batch["images"] = torch.cat([images]*self.minibatch_repeat, dim=0)
+            target_height, target_width = images.shape[2], images.shape[3]
         else:
             latents = self.get_latents(samples, self.latent)
             batch["latents"] = torch.cat([latents]*self.minibatch_repeat, dim=0)
+            target_height, target_width = latents.shape[2]*8, latents.shape[3]*8
+
+        batch["size_condition"] = self.get_size_condition(samples, target_height, target_width)
 
         if self.text_emb:
             encoder_hidden_states, pooled_outputs = self.get_text_embeddings(samples, self.text_emb if isinstance(self.text_emb, str) else "text_emb")
@@ -143,6 +154,34 @@ class BaseDataset(Dataset):
                 caption = ""
             captions.append(caption)
         return captions
+    
+    def get_size_condition(self, samples, target_height, target_width):
+        size_condition = []
+        for sample in samples:
+            if sample in self.original_size:
+                original_width = self.original_size[sample]["original_width"]
+                original_height = self.original_size[sample]["original_height"]
+            
+                original_ratio = original_width / original_height
+                target_ratio = target_width / target_height
+
+                if original_ratio > target_ratio: # 横長の場合
+                    resize_ratio = target_width / original_width # 横幅を合わせる
+                    resized_height = original_height * resize_ratio # 縦をリサイズ
+                    crop_top = (target_height - resized_height) // 2 # 上部の足りない分がcrop_top
+                    crop_left = 0
+                else:
+                    resize_ratio = target_height / original_height
+                    resize_width = original_width * resize_ratio 
+                    crop_top = 0
+                    crop_left = (target_width - resize_width) // 2
+            else:
+                original_width, original_height = target_width, target_height
+                crop_top = 0
+                crop_left = 0
+            size_list = [original_height, original_width, crop_top, crop_left, target_height, target_width]    
+            size_condition.append(torch.tensor(size_list))
+        return torch.stack(size_condition)
     
     def get_text_embeddings(self, samples, dir="text_emb"):
         if random.random() < self.ucg:

@@ -102,7 +102,7 @@ class LohaModule(nn.Module):
         self.cp = False
 
         self.shape = org_module.weight.shape
-        if org_module.__class__.__name__ == 'Conv2d':
+        if "Conv" in org_module.__class__.__name__:
             in_dim = org_module.in_channels
             k_size = org_module.kernel_size
             out_dim = org_module.out_channels
