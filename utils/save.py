@@ -1,17 +1,13 @@
 import torch
 import os
 from utils.generate import StableDiffusionGenerator
+from utils.functions import default
 import wandb
 
 # Saveクラス：
 # __init__には出力先：outputと、1エポックごとのステップ数steps_par_epochを引数に取ることが必要。
 # __call__にはSaveと同様の引数を取ることが必要。
 
-def default(dic, key, default_value):
-    if hasattr(dic, key) and getattr(dic, key) is not None:
-        return getattr(dic, key)
-    else:
-        return default_value
 
 # 保存先のディレクトリ
 DIRECTORIES = [

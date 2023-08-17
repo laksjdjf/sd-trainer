@@ -1,11 +1,5 @@
 import torch
-
-# 辞書にkeyがあればその値を、なければdefault_valueを返す
-def default(dic, key, default_value):
-    if key in dic and dic[key] is not None:
-        return dic[key]
-    else:
-        return default_value
+from utils.functions import default
 
 class TextEmbeddingDataset(torch.utils.data.Dataset):
     def __init__(self, prompts, text_model, device="cuda", batch_size=1, clip_skip=-1):

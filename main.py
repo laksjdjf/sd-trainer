@@ -5,7 +5,6 @@ import torch
 from tqdm import tqdm
 import time
 from omegaconf import OmegaConf
-import importlib
 
 from accelerate.utils import set_seed
 
@@ -13,22 +12,7 @@ from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils.model import load_model, patch_mid_block_checkpointing
-
-# データローダー用の関数
-def collate_fn(x):
-    return x[0]
-
-# 文字列からモジュールを取得
-def get_attr_from_config(config_text: str):
-    module = ".".join(config_text.split(".")[:-1])
-    attr = config_text.split(".")[-1]
-    return getattr(importlib.import_module(module), attr)
-
-def default(dic, key, default_value):
-    if hasattr(dic, key) and getattr(dic, key) is not None:
-        return getattr(dic, key)
-    else:
-        return default_value
+from utils.functions import collate_fn, get_attr_from_config, default
 
 def main(config):
     seed = default(config.train, "seed", None)
