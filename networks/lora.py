@@ -1,14 +1,11 @@
 # This code is based on https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
 
 import torch
-import torch.nn.functional as F
-import math
 
-from networks.loha import LohaModule
 import contextlib
-
-from safetensors.torch import load_file
 import os
+
+from utils.functions import get_attr_from_config, load_sd, save_sd
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
@@ -17,14 +14,6 @@ LORA_PREFIX_UNET = 'lora_unet'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
 LORA_PREFIX_TEXT_ENCODER_1 = 'lora_te1'
 LORA_PREFIX_TEXT_ENCODER_2 = 'lora_te2'
-
-
-def load(file):
-    if os.path.splitext(file)[1] == ".safetensors":
-        return load_file(file)
-    else:
-        return torch.load(file, map_location="cpu")
-
 
 def get_rank_and_alpha_from_state_dict(state_dict):
     modules_rank = {}
@@ -49,153 +38,6 @@ def get_rank_and_alpha_from_state_dict(state_dict):
             modules_alpha[key] = modules_rank[key]
 
     return modules_rank, modules_alpha, ema
-
-
-class LoRAModule(torch.nn.Module):
-    # replaces forward method of the original Linear, instead of replacing the original Linear module.
-
-    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, lora_rank=4, alpha=1, forward_mode=None):
-        """ if alpha == 0 or None, alpha is rank (no scaling). """
-        super().__init__()
-        self.lora_name = lora_name
-        self.lora_rank = lora_rank
-        self.forward_mode = forward_mode
-        self.ema = False
-
-        if 'Linear' in org_module.__class__.__name__:
-            in_dim = org_module.in_features
-            out_dim = org_module.out_features
-            if lora_rank == "dynamic":
-                lora_rank = min(math.ceil(in_dim ** 0.5),
-                                math.ceil(out_dim ** 0.5)) * 2
-                self.lora_rank = lora_rank
-            self.lora_down = torch.nn.Linear(in_dim, lora_rank, bias=False)
-            self.lora_up = torch.nn.Linear(lora_rank, out_dim, bias=False)
-            self.op = F.linear
-            self.extra_args = {}
-            kernel_size = (1, 1) # 便宜上の定義
-
-        elif 'Conv' in org_module.__class__.__name__:
-            in_dim = org_module.in_channels
-            out_dim = org_module.out_channels
-
-            if lora_rank == "dynamic":
-                lora_rank = min(math.ceil(in_dim ** 0.5),
-                                math.ceil(out_dim ** 0.5)) * 2
-                self.lora_rank = lora_rank
-
-            self.lora_rank = min(self.lora_rank, in_dim, out_dim)
-            if self.lora_rank != lora_rank:
-                print(f"{lora_name} dim (rank) is changed to: {self.lora_rank}")
-
-            kernel_size = org_module.kernel_size
-            stride = org_module.stride
-            padding = org_module.padding
-            self.lora_down = torch.nn.Conv2d(
-                in_dim, self.lora_rank, kernel_size, stride, padding, bias=False)
-            self.lora_up = torch.nn.Conv2d(
-                self.lora_rank, out_dim, (1, 1), (1, 1), bias=False)
-            
-            self.op = F.conv2d
-            self.extra_args = {
-                "stride": stride,
-                "padding": padding
-            }
-
-        self.in_dim = in_dim
-        self.out_dim = out_dim
-        self.nm = self.in_dim * self.out_dim * kernel_size[0] * kernel_size[1]
-        self.nplusm = self.in_dim * kernel_size[0] * kernel_size[1] + self.out_dim
-        self.shape = org_module.weight.shape
-
-        if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().numpy()
-        alpha = lora_rank if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.lora_rank
-        self.register_buffer('alpha', torch.tensor(alpha))
-
-        # same as microsoft's
-        torch.nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
-        torch.nn.init.zeros_(self.lora_up.weight)
-
-        self.multiplier = multiplier
-        self.org_module = [org_module] # moduleにならないようにlistに入れる
-
-    def apply_to(self, multiplier=None):
-        if multiplier is not None:
-            self.multiplier = multiplier
-        self.org_forward = self.org_module[0].forward
-        self.org_module[0].forward = self.forward
-
-    def unapply_to(self):
-        if self.org_forward is not None:
-            self.org_module[0].forward = self.org_forward
-
-    def merge_to(self, multiplier=None, sign=1):
-        lora_weight = self.get_weight(multiplier) * sign
-
-        # get org weight
-        org_sd = self.org_module[0].state_dict()
-        org_weight = org_sd["weight"]
-        weight = org_weight + lora_weight.to(org_weight.device, dtype=org_weight.dtype)
-
-        # set weight to org_module
-        org_sd["weight"] = weight
-        self.org_module[0].load_state_dict(org_sd)
-
-    def update_ema(self, decay=0.999):
-        self.decay = decay
-        if not hasattr(self,"ema_up"):
-            self.register_buffer('ema_up', self.lora_up.weight.detach())
-            self.register_buffer('ema_down', self.lora_down.weight.detach())
-        else:
-            self.ema_up = self.ema_up * decay + self.lora_up.weight * (1 - decay)
-            self.ema_down = self.ema_down * decay + self.lora_down.weight * (1 - decay)
-
-    def lora_forward(self, x):
-        if self.ema:
-            x = self.op(x, self.ema_down, **self.extra_args)
-            x = self.op(x, self.ema_up)
-            return x * self.multiplier * self.scale
-        else:
-            return self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
-
-    def restore_from(self, multiplier=None):
-        self.merge_to(multiplier=multiplier, sign=-1)
-
-    def get_weight(self, multiplier=None):
-        if multiplier is None:
-            multiplier = self.multiplier
-
-        if self.ema:
-            up_weight = self.ema_up
-            down_weight = self.ema_down
-        else:
-            up_weight = self.lora_up.weight# out_dim, rank, [1, 1]
-            down_weight = self.lora_down.weight # rank, in_dim, [kernel, kernel]
-        
-        lora_weight = up_weight.view(-1, self.lora_rank) @ down_weight.view(self.lora_rank, -1)  # out_dim, in_dim*kernel*kernel
-        lora_weight = lora_weight.view(self.shape)  # out_dim, in_dim, [kernel, kernel]
-
-        return lora_weight * multiplier * self.scale
-
-    def forward(self, x):
-        if self.multiplier == 0.0:
-            return self.org_forward(x)
-        else:
-            if self.forward_mode == "merge":
-                if len(x.shape) == 4:
-                    b = x.shape[0] * x.shape[2] * x.shape[3]
-                elif len(x.shape) == 3:
-                    b = x.shape[0] * x.shape[1]
-                else:
-                    b = x.shape[0]
-                #if self.nm < self.nplusm * b:
-                if self.nm < b * (self.lora_rank + 2 * self.out_dim):
-                    weight = self.get_weight() + self.org_module[0].weight
-                    bias = None if self.org_module[0].bias is None else self.org_module[0].bias
-                    return self.op(x, weight, bias, **self.extra_args)
-            return self.org_forward(x) + self.lora_forward(x)
 
 class LoRANetwork(torch.nn.Module):
     def __init__(
@@ -232,9 +74,11 @@ class LoRANetwork(torch.nn.Module):
         self.target_block = "up_blocks" if up_only else ""
 
         if module == "loha":
-            self.module = LohaModule
+            self.module = get_attr_from_config("networks.lora_modules.LohaModule")
+        elif module is None:
+            self.module = get_attr_from_config("networks.lora_modules.LoRAModule")
         else:
-            self.module = LoRAModule
+            self.module = get_attr_from_config(module)
 
         # text encoderのloraを作る
         if train_encoder:
@@ -367,14 +211,10 @@ class LoRANetwork(torch.nn.Module):
         if os.path.splitext(file)[1] == '':
             file += '.safetensors'
 
-        if os.path.splitext(file)[1] == '.safetensors':
-            from safetensors.torch import save_file
-            save_file(state_dict, file)
-        else:
-            torch.save(state_dict, file)
+        save_sd(state_dict, file)
 
     def load_weights(self, file):
-        weights_sd = load(file)
+        weights_sd = load_sd(file)
         info = self.load_state_dict(weights_sd, False)
         return info
 
