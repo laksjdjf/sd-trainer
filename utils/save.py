@@ -17,6 +17,7 @@ DIRECTORIES = [
     "trained/pfg",
     "trained/controlnet",
     "trained/embeddings",
+    "trained/ip_adapter",
 ]
 
 class Save:
@@ -83,7 +84,7 @@ class Save:
         self.seed = seed
 
     @torch.no_grad()
-    def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None):
+    def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None, ip_adapter=None):
         if self.wandb:
             self.run.log(logs, step=steps)
             
@@ -112,6 +113,9 @@ class Save:
             
             if text_model.textual_inversion:
                 text_model.save_embeddings(os.path.join("trained/embeddings", filename))
+
+            if ip_adapter is not None and self.config.ip_adapter.train:
+                ip_adapter.save_ip_adapter(os.path.join("trained/ip_adapter", filename + '.bin'))
 
             # 検証画像生成
             torch.cuda.empty_cache()
@@ -151,6 +155,13 @@ class Save:
                         self.resolution = (guide_image.shape[3], guide_image.shape[2])  # width, height
                     else:
                         guide_image = None
+
+                    if ip_adapter is not None:
+                        cond = ip_adapter.get_image_embeds(batch["image_embeds"][i].unsqueeze(0).to("cuda"))
+                        uncond = ip_adapter.get_image_embeds(torch.zeros_like(batch["image_embeds"][i]).unsqueeze(0).to("cuda"))
+                        ip_adapter_feature = (cond, uncond)
+                    else:
+                        ip_adapter_feature = None
                     
                     image = pipeline.generate(
                         prompt,
@@ -159,6 +170,7 @@ class Save:
                         height=self.resolution[1],
                         pfg_feature=pfg_feature,
                         controlnet=controlnet,
+                        ip_adapter_feature=ip_adapter_feature,
                         guide_image=guide_image,
                         text_embeds=text_embed,
                         seed=self.seed + i,

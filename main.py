@@ -96,6 +96,18 @@ def main(config):
         print("pfgを適用しました。")
     else:
         pfg = None
+    
+    # ip-adapterの準備
+    if hasattr(config, "ip_adapter"):
+        from networks.ip_adapter import IPAdapter
+        ip_adapter = IPAdapter(unet, **config.ip_adapter.args)
+        ip_adapter.train(config.ip_adapter.train)
+        ip_adapter.requires_grad_(config.ip_adapter.train)
+        if config.ip_adapter.train:
+            params.append({'params': ip_adapter.trainable_params(), 'lr': unet_lr})
+        print("ip-adapterを適用しました。")
+    else:
+        ip_adapter = None
 
     # unet, text encoderのパラメータを追加
     if config.train.train_unet:
@@ -188,6 +200,8 @@ def main(config):
         pfg.to(device, dtype=train_dtype if config.pfg.train else weight_dtype)
     if controlnet is not None:
         controlnet.to(device, dtype=train_dtype if config.controlnet.train else weight_dtype)
+    if ip_adapter is not None:
+        ip_adapter.to(device, dtype=train_dtype if config.ip_adapter.train else weight_dtype)
 
     # sampling stepの範囲を指定
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in config.feature.step_range.split(",")]
@@ -239,6 +253,12 @@ def main(config):
                 with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                     pfg_feature = pfg(pfg_inputs).to(dtype=encoder_hidden_states.dtype)
                 encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
+
+            if "image_embeds" in batch:
+                image_embeds = batch["image_embeds"].to(device, dtype=weight_dtype)
+                with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
+                    image_embeds = ip_adapter.get_image_embeds(image_embeds)
+                encoder_hidden_states = torch.cat([encoder_hidden_states, image_embeds], dim=1)
 
             noise = torch.randn_like(latents)
             
@@ -315,7 +335,7 @@ def main(config):
             progress_bar.set_postfix(logs)
 
             final = total_steps == global_steps # 最後のステップかどうか
-            save(global_steps, final, logs, batch, text_model, unet, vae, noise_scheduler, network, pfg, controlnet)
+            save(global_steps, final, logs, batch, text_model, unet, vae, noise_scheduler, network, pfg, controlnet, ip_adapter)
             if final:
                 return
 
