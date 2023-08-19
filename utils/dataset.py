@@ -102,11 +102,11 @@ class BaseDataset(Dataset):
             batch["captions"] = captions * self.minibatch_repeat
 
         if self.image_emb:
-            image_embes = self.get_image_embeds(samples, self.image_emb if isinstance(self.image_emb, str) else "image_emb")
-            batch["image_embeds"] = torch.cat([image_embes]*self.minibatch_repeat, dim=0)
-            for i, caotion in enumerate(captions):
-                if caotion == "":
-                    batch["image_embeds"][i] = torch.zeros_like(batch["image_embeds"][i])
+            image_embeds = self.get_image_embeds(samples, self.image_emb if isinstance(self.image_emb, str) else "image_emb")
+            for i, caption in enumerate(captions):
+                if caption == "":
+                    image_embeds[i] = torch.zeros_like(image_embeds[i])
+            batch["image_embeds"] = torch.cat([image_embeds]*self.minibatch_repeat, dim=0)
 
         if self.mask:
             masks = self.get_masks(samples, self.mask if isinstance(self.mask, str) else "mask")

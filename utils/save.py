@@ -159,7 +159,7 @@ class Save:
                     if ip_adapter is not None:
                         cond = ip_adapter.get_image_embeds(batch["image_embeds"][i].unsqueeze(0).to("cuda"))
                         uncond = ip_adapter.get_image_embeds(torch.zeros_like(batch["image_embeds"][i]).unsqueeze(0).to("cuda"))
-                        ip_adapter_feature = (cond, uncond)
+                        ip_adapter.set_ip_hidden_states(torch.cat([cond, uncond]))
                     else:
                         ip_adapter_feature = None
                     
@@ -170,7 +170,6 @@ class Save:
                         height=self.resolution[1],
                         pfg_feature=pfg_feature,
                         controlnet=controlnet,
-                        ip_adapter_feature=ip_adapter_feature,
                         guide_image=guide_image,
                         text_embeds=text_embed,
                         seed=self.seed + i,

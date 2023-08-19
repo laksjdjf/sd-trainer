@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-
+    
 class IPAttnProcessor(nn.Module):
     r"""
     Attention processor for IP-Adapater.
@@ -58,9 +58,6 @@ class IPAttnProcessor(nn.Module):
             encoder_hidden_states = hidden_states
         elif attn.norm_cross:
             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
-            
-        # split hidden states
-        encoder_hidden_states, ip_hidden_states = encoder_hidden_states[:, :self.text_context_len, :], encoder_hidden_states[:, self.text_context_len:, :]
 
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
@@ -74,7 +71,7 @@ class IPAttnProcessor(nn.Module):
         hidden_states = attn.batch_to_head_dim(hidden_states)
         
         # for ip-adapter
-        ip_key, ip_value = self.to_kv[0](ip_hidden_states)
+        ip_key, ip_value = self.to_kv[0].kv
 
         ip_key = attn.head_to_batch_dim(ip_key)
         ip_value = attn.head_to_batch_dim(ip_value)
@@ -121,13 +118,17 @@ class To_KV(nn.Module):
         super().__init__()
         self.to_k_ip  = nn.Linear(cross_attention_dim, hidden_size, bias=False)
         self.to_v_ip  = nn.Linear(cross_attention_dim, hidden_size, bias=False)
-        self.to_k_ip.weight.data = unet.state_dict()[name + ".to_k.weight"].detach()
-        self.to_v_ip.weight.data = unet.state_dict()[name + ".to_v.weight"].detach()
-
+        self.to_k_ip.weight.data = unet.state_dict()[name + ".to_k.weight"].clone().detach()
+        self.to_v_ip.weight.data = unet.state_dict()[name + ".to_v.weight"].clone().detach()
+        self.kv = None
+        
     def forward(self, context):
         key = self.to_k_ip(context)
         value = self.to_v_ip(context)
         return key, value
+    
+    def set_kv(self, context):
+        self.kv = self(context)
     
 class IPAdapter(nn.Module):    
     def __init__(
@@ -151,14 +152,13 @@ class IPAdapter(nn.Module):
                 attn_procs[name] = IPAttnProcessor(
                     hidden_size=hidden_size,
                     cross_attention_dim=cross_attention_dim,
-                    scale=1.0,
-                    ip_layer=ip_layers[-1]
+                    ip_layer=ip_layers[-1],
                 )
             else:
                 ip_layers.append(nn.Identity())
                 attn_procs[name] = unet.attn_processors[name]
-                
         unet.set_attn_processor(attn_procs)
+        
         self.ip_layers = nn.ModuleList(ip_layers)
 
         # image proj model
@@ -175,6 +175,7 @@ class IPAdapter(nn.Module):
         state_dict = torch.load(resume, map_location="cpu")
         self.image_proj_model.load_state_dict(state_dict["image_proj"])
         self.ip_layers.load_state_dict(state_dict["ip_adapter"])
+        print("学習済みIP-Adapterをロードしました。")
 
     def save_ip_adapter(self, save_path):
         state_dict = {
@@ -192,3 +193,13 @@ class IPAdapter(nn.Module):
     def get_image_embeds(self, clip_image_embeds):
         image_prompt_embeds = self.image_proj_model(clip_image_embeds)
         return image_prompt_embeds
+    
+    def set_ip_hidden_states(self, ip_hidden_states):
+        for layer in self.ip_layers:
+            if isinstance(layer, To_KV):
+                layer.set_kv(ip_hidden_states)
+    
+    def set_scale(self, unet, scale):
+        for key in unet.attn_processors.keys():
+            if "attn2" in key:
+                unet.attn_processors[key].scale = 0

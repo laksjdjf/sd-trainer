@@ -58,7 +58,6 @@ class StableDiffusionGenerator:
         num_inference_steps: int = 30,
         pfg_feature: torch.Tensor = None,
         controlnet=None,
-        ip_adapter_feature=None,
         guide_image=None,
         text_embeds=None,
         seed=4545,
@@ -94,12 +93,6 @@ class StableDiffusionGenerator:
             # zero padding
             uncond = torch.cat([uncond, torch.zeros(uncond.shape[0], pfg_feature.shape[1],
                                uncond.shape[2]).to(uncond.device, dtype=uncond.dtype)], dim=1)
-            encoder_hidden_state = torch.cat([cond, uncond], dim=0)
-
-        if ip_adapter_feature is not None:
-            cond, uncond = encoder_hidden_state.chunk(2)
-            cond = torch.cat([cond, ip_adapter_feature[0]], dim=1)
-            uncond = torch.cat([uncond, ip_adapter_feature[1]], dim=1)
             encoder_hidden_state = torch.cat([cond, uncond], dim=0)
 
         self.scheduler.set_timesteps(num_inference_steps, device="cuda")

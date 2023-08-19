@@ -258,8 +258,7 @@ def main(config):
                 image_embeds = batch["image_embeds"].to(device, dtype=weight_dtype)
                 with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                     image_embeds = ip_adapter.get_image_embeds(image_embeds)
-                encoder_hidden_states = torch.cat([encoder_hidden_states, image_embeds], dim=1)
-
+                    ip_adapter.set_ip_hidden_states(image_embeds)
             noise = torch.randn_like(latents)
             
             if default(config.train,"noise_offset", False):
