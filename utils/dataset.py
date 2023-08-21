@@ -22,6 +22,7 @@ class BaseDataset(Dataset):
             caption: Optional[str] = "captions",
             image: Optional[str] = None,
             text_emb: Optional[str] = None,
+            image_emb: Optional[str] = None,
             mask: Optional[str] = None,
             pfg: Optional[str] = None,
             control: Optional[str] = None,
@@ -49,6 +50,7 @@ class BaseDataset(Dataset):
         self.caption = caption
         self.image = image
         self.text_emb = text_emb
+        self.image_emb = image_emb
         self.mask = mask
         self.pfg = pfg
         self.control = control
@@ -98,7 +100,14 @@ class BaseDataset(Dataset):
         else:
             captions = self.get_captions(samples, self.caption)
             batch["captions"] = captions * self.minibatch_repeat
-        
+
+        if self.image_emb:
+            image_embeds = self.get_image_embeds(samples, self.image_emb if isinstance(self.image_emb, str) else "image_emb")
+            for i, caption in enumerate(captions):
+                if caption == "":
+                    image_embeds[i] = torch.zeros_like(image_embeds[i])
+            batch["image_embeds"] = torch.cat([image_embeds]*self.minibatch_repeat, dim=0)
+
         if self.mask:
             masks = self.get_masks(samples, self.mask if isinstance(self.mask, str) else "mask")
             batch["mask"] = torch.cat([masks]*self.minibatch_repeat, dim=0)
@@ -201,6 +210,11 @@ class BaseDataset(Dataset):
         ])
         pooled_outputs.to(memory_format=torch.contiguous_format).float()
         return encoder_hidden_states, pooled_outputs
+    
+    def get_image_embeds(self, samples, dir="image_emb"):
+        image_embes = torch.stack([torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npy")))for sample in samples])
+        image_embes.to(memory_format=torch.contiguous_format).float()
+        return image_embes
 
     def get_masks(self, samples, dir="mask"):
         masks = torch.stack([
