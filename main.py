@@ -122,9 +122,21 @@ def main(config):
     if hasattr(config, "controlnet"):
         from diffusers import ControlNetModel
         if config.controlnet.resume is not None:
-            controlnet = ControlNetModel.from_pretrained(config.controlnet.resume)
+            pre_controlnet = ControlNetModel.from_pretrained(config.controlnet.resume)
         else:
-            controlnet = ControlNetModel.from_unet(unet)
+            pre_controlnet = ControlNetModel.from_unet(unet)  
+        if default(config.controlnet, "transformer_layers_per_block", False):
+            down_block_types = tuple(["DownBlock2D" if l == 0 else "CrossAttnDownBlock2D" for l in config.controlnet.transformer_layers_per_block])
+            transformer_layers_per_block = tuple([int(x) for x in config.controlnet.transformer_layers_per_block])
+            controlnet = ControlNetModel.from_config(
+                pre_controlnet.config,
+                down_block_types=down_block_types,
+                transformer_layers_per_block=transformer_layers_per_block,
+            )
+            controlnet.load_state_dict(pre_controlnet.state_dict(), strict=False)
+            del pre_controlnet
+        else:
+            controlnet = pre_controlnet
         controlnet.config.global_pool_conditions = config.controlnet.global_average_pooling
         if config.train.use_xformers:
             controlnet.enable_xformers_memory_efficient_attention()
@@ -261,6 +273,10 @@ def main(config):
                     ip_adapter.set_ip_hidden_states(image_embeds)
             noise = torch.randn_like(latents)
             
+            if 'control' in batch and hasattr(network, "set_cond_image"):
+                with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
+                    network.set_cond_image(batch["control"].to(device, dtype=train_dtype))
+            
             if default(config.train,"noise_offset", False):
                 noise_offset = config.train.noise_offset * torch.randn(latents.shape[0], latents.shape[1], 1, 1)
                 noise = noise + noise_offset.to(noise.device, dtype=noise.dtype)
@@ -286,6 +302,7 @@ def main(config):
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
                         controlnet_cond=batch["control"].to(latents.device, dtype=latents.dtype),
+                        added_cond_kwargs=added_cond_kwargs,
                         return_dict=False,
                     )
                 else:

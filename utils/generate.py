@@ -120,6 +120,7 @@ class StableDiffusionGenerator:
                     t,
                     encoder_hidden_states=encoder_hidden_state,
                     controlnet_cond=guide_image,
+                    added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
                 )
             else:
