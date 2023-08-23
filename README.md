@@ -49,10 +49,12 @@ python3 preprocess/tagger_control.py -d "<dataset_directory>" -o "<dataset_direc
 + Aspect ratio bucketingによる複数のアスペクト比の学習
 + LoRA、LoCon、Lohaの学習
 + Maskを使った学習
-+ ControlNetの学習
++ ControlNetの学習(transformerの省略による軽量版含む)
++ ControlNet-LLLiteの学習
 + PFGの学習
 + LECOの学習
-+ Textual Inversion
++ Textual Inversionの学習
++ IP-Adapterの学習
 + wandbによるログチェック
 + 設定ファイルからOptimizerを自由に選べる
 + データセット、セーブ機能の拡張性（クラスの定義のみで使えるはず）
