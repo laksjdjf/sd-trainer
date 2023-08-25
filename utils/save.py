@@ -121,7 +121,7 @@ class Save:
             torch.cuda.empty_cache()
             vae_device = pipeline.vae.device
             vae.to("cuda")
-            with torch.autocast('cuda'):
+            with torch.autocast('cuda',dtype=torch.bfloat16):
                 # バッチサイズがnum_imagesより小さい場合はバッチサイズに合わせる
                 if "encoder_hidden_states" in batch:
                     text_embeds = (batch["encoder_hidden_states"], batch["pooled_outputs"])
@@ -162,6 +162,10 @@ class Save:
                         ip_adapter.set_ip_hidden_states(torch.cat([cond, uncond]))
                     else:
                         ip_adapter_feature = None
+                        
+                    if 'control' in batch and hasattr(network, "set_cond_image"):
+                        network.set_cond_image(batch["control"][i].unsqueeze(0).to("cuda"))
+                        self.resolution = (batch["control"].shape[3], batch["control"].shape[2])  # width, height
                     
                     image = pipeline.generate(
                         prompt,
