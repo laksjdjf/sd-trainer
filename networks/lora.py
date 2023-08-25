@@ -128,7 +128,7 @@ class LoRANetwork(torch.nn.Module):
 
     @classmethod
     def from_file(cls, text_model, unet, path, multiplier=1.0, module=None, mode="apply"):
-        state_dict = load(path)
+        state_dict = load_sd(path)
         modules_rank, modules_alpha, ema = get_rank_and_alpha_from_state_dict(state_dict)
         network = cls(text_model, unet, False, True, rank=modules_rank, alpha=modules_alpha,
                       multiplier=multiplier, module=module, mode=mode, state_dict=state_dict, ema=ema)
