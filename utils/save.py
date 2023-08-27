@@ -84,7 +84,7 @@ class Save:
         self.seed = seed
 
     @torch.no_grad()
-    def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None, ip_adapter=None):
+    def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None, ip_adapter=None, clip_vision=None):
         if self.wandb:
             self.run.log(logs, step=steps)
             
@@ -157,11 +157,15 @@ class Save:
                         guide_image = None
 
                     if ip_adapter is not None:
-                        cond = ip_adapter.get_image_embeds(batch["image_embeds"][i].unsqueeze(0).to("cuda"))
-                        uncond = ip_adapter.get_image_embeds(torch.zeros_like(batch["image_embeds"][i]).unsqueeze(0).to("cuda"))
+                        if "image_embeds" in batch:
+                            cond, uncond = batch["image_embeds"][i].unsqueeze(0).to("cuda"), torch.zeros_like(batch["image_embeds"][i]).unsqueeze(0).to("cuda")
+                        else:
+                            cond, uncond = ip_adapter.clip_vision_encode(clip_vision, batch["clip_images"][i].unsqueeze(0).to(clip_vision.device, dtype=clip_vision.dtype))
+                            
+                        cond = ip_adapter.get_image_embeds(cond)
+                        uncond = ip_adapter.get_image_embeds(uncond)
+                        
                         ip_adapter.set_ip_hidden_states(torch.cat([cond, uncond]))
-                    else:
-                        ip_adapter_feature = None
                         
                     if 'control' in batch and hasattr(network, "set_cond_image"):
                         network.set_cond_image(batch["control"][i].unsqueeze(0).to("cuda"))

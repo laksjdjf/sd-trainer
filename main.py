@@ -105,9 +105,16 @@ def main(config):
         ip_adapter.requires_grad_(config.ip_adapter.train)
         if config.ip_adapter.train:
             params.append({'params': ip_adapter.trainable_params(), 'lr': unet_lr})
+        if config.ip_adapter.clip_vision:
+            from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
+            clip_vision = CLIPVisionModelWithProjection.from_pretrained(config.ip_adapter.clip_vision, subfolder=config.ip_adapter.clip_vision_subfolder)
+            clip_vision.to(device).eval().requires_grad_(False)
+        else:
+            clip_vision = None
         print("ip-adapterを適用しました。")
     else:
         ip_adapter = None
+        clip_vision = None
 
     # unet, text encoderのパラメータを追加
     if config.train.train_unet:
@@ -214,6 +221,8 @@ def main(config):
         controlnet.to(device, dtype=train_dtype if config.controlnet.train else weight_dtype)
     if ip_adapter is not None:
         ip_adapter.to(device, dtype=train_dtype if config.ip_adapter.train else weight_dtype)
+        if clip_vision is not None:
+            clip_vision.to(device, dtype=weight_dtype)
 
     # sampling stepの範囲を指定
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in config.feature.step_range.split(",")]
@@ -266,12 +275,14 @@ def main(config):
                     pfg_feature = pfg(pfg_inputs).to(dtype=encoder_hidden_states.dtype)
                 encoder_hidden_states = torch.cat([encoder_hidden_states, pfg_feature], dim=1)
 
-            if "image_embeds" in batch:
-                image_embeds = batch["image_embeds"].to(device, dtype=weight_dtype)
+            if ip_adapter is not None:
+                if "image_embeds" in batch:
+                    image_embeds = batch["image_embeds"].to(device, dtype=weight_dtype)
+                else:
+                    image_embeds, _ = ip_adapter.clip_vision_encode(clip_vision, batch["clip_images"].to(device, dtype=weight_dtype))
                 with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                     image_embeds = ip_adapter.get_image_embeds(image_embeds)
                     ip_adapter.set_ip_hidden_states(image_embeds)
-            noise = torch.randn_like(latents)
             
             if 'control' in batch and hasattr(network, "set_cond_image"):
                 with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
@@ -281,6 +292,7 @@ def main(config):
                 noise_offset = config.train.noise_offset * torch.randn(latents.shape[0], latents.shape[1], 1, 1)
                 noise = noise + noise_offset.to(noise.device, dtype=noise.dtype)
 
+            noise = torch.randn_like(latents)
             bsz = latents.shape[0]
 
             if sdxl:
@@ -351,7 +363,7 @@ def main(config):
             progress_bar.set_postfix(logs)
 
             final = total_steps == global_steps # 最後のステップかどうか
-            save(global_steps, final, logs, batch, text_model, unet, vae, noise_scheduler, network, pfg, controlnet, ip_adapter)
+            save(global_steps, final, logs, batch, text_model, unet, vae, noise_scheduler, network, pfg, controlnet, ip_adapter, clip_vision)
             if final:
                 return
 
