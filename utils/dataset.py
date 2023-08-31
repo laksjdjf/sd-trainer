@@ -9,7 +9,8 @@ import numpy as np
 from transformers import CLIPTokenizer
 from utils.model import TextModel
 from typing import Optional
-
+from preprocess.utils import preprocess_for_clip_vision
+from transformers import CLIPImageProcessor
 class BaseDataset(Dataset):
     def __init__(
             self,
@@ -26,6 +27,7 @@ class BaseDataset(Dataset):
             mask: Optional[str] = None,
             pfg: Optional[str] = None,
             control: Optional[str] = None,
+            clip_image: Optional[str] = None,
             prompt: Optional[str] = None,
             prefix: str = "",
             shuffle: bool = False,
@@ -54,6 +56,7 @@ class BaseDataset(Dataset):
         self.mask = mask
         self.pfg = pfg
         self.control = control
+        self.clip_image = clip_image
         self.prompt = prompt  # 全ての画像のcaptionをpromptにする
         self.prefix = prefix  # captionのprefix
         self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
@@ -117,6 +120,12 @@ class BaseDataset(Dataset):
         if self.control:
             control = self.get_control(samples, self.control if isinstance(self.control, str) else "control")
             batch["control"] = torch.cat([control]*self.minibatch_repeat, dim=0)
+        if self.clip_image:
+            clip_images = self.get_clip_image(samples, self.clip_image if isinstance(self.clip_image, str) else "clip_images")
+            for i, caption in enumerate(captions):
+                if caption == "":
+                    clip_images[i] = torch.zeros_like(clip_images[i])
+            batch["clip_images"] = torch.cat([clip_images]*self.minibatch_repeat, dim=0)
 
         return batch
 
@@ -244,3 +253,15 @@ class BaseDataset(Dataset):
         images_tensor = images_tensor.transpose(0, 3, 1, 2)
         images_tensor = torch.from_numpy(images_tensor).to(memory_format=torch.contiguous_format).float()
         return images_tensor
+    
+    def get_clip_image(self, samples, dir="clip_images"):
+        preprocessor = CLIPImageProcessor()
+        images = []
+        for sample in samples:
+            image = Image.open(os.path.join(self.path, dir, sample + ".png")).convert("RGB")
+            image = preprocess_for_clip_vision(image)
+            image = preprocessor(images=image, return_tensors="pt").pixel_values[0]
+            images.append(image)
+        images = torch.stack(images)
+        images = images.to(memory_format=torch.contiguous_format).float()
+        return images
