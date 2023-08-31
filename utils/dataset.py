@@ -122,6 +122,9 @@ class BaseDataset(Dataset):
             batch["control"] = torch.cat([control]*self.minibatch_repeat, dim=0)
         if self.clip_image:
             clip_images = self.get_clip_image(samples, self.clip_image if isinstance(self.clip_image, str) else "clip_images")
+            for i, caption in enumerate(captions):
+                if caption == "":
+                    clip_images[i] = torch.zeros_like(clip_images[i])
             batch["clip_images"] = torch.cat([clip_images]*self.minibatch_repeat, dim=0)
 
         return batch
