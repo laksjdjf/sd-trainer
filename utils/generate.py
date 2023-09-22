@@ -60,6 +60,7 @@ class StableDiffusionGenerator:
         controlnet=None,
         guide_image=None,
         text_embeds=None,
+        additional_skip=None,
         seed=4545,
     ):
         
@@ -123,6 +124,8 @@ class StableDiffusionGenerator:
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
                 )
+            elif additional_skip is not None:
+                down_block_res_samples, mid_block_res_sample = additional_skip.res(len(prompts)*2, height // 8, width // 8)
             else:
                 down_block_res_samples, mid_block_res_sample = None, None
 

@@ -19,6 +19,7 @@ def get_rank_and_alpha_from_state_dict(state_dict):
     modules_rank = {}
     modules_alpha = {}
     ema = False
+    module = None
     for key, value in state_dict.items():
         if "." not in key:
             continue
@@ -31,13 +32,17 @@ def get_rank_and_alpha_from_state_dict(state_dict):
         elif "lora_down" in key:
             rank = value.size()[0]
             modules_rank[lora_name] = rank
+        elif "hada_w1_a" in key:
+            rank = value.size()[0]
+            modules_rank[lora_name] = rank
+            module = "networks.lora_modules.LohaModule"
 
     # support old LoRA without alpha
     for key in modules_rank.keys():
         if key not in modules_alpha:
             modules_alpha[key] = modules_rank[key]
 
-    return modules_rank, modules_alpha, ema
+    return modules_rank, modules_alpha, ema, module
 
 class LoRANetwork(torch.nn.Module):
     def __init__(
@@ -129,7 +134,7 @@ class LoRANetwork(torch.nn.Module):
     @classmethod
     def from_file(cls, text_model, unet, path, multiplier=1.0, module=None, mode="apply"):
         state_dict = load_sd(path)
-        modules_rank, modules_alpha, ema = get_rank_and_alpha_from_state_dict(state_dict)
+        modules_rank, modules_alpha, ema, module = get_rank_and_alpha_from_state_dict(state_dict)
         network = cls(text_model, unet, False, True, rank=modules_rank, alpha=modules_alpha,
                       multiplier=multiplier, module=module, mode=mode, state_dict=state_dict, ema=ema)
         return network
