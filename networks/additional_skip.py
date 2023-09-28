@@ -19,14 +19,14 @@ class AdditionalSkip(nn.Module):
             self.down.append(self.down[-1])
             
         self.params = nn.ParameterList([nn.Parameter(torch.zeros(1,channel,1,1)) for channel in self.channels])
-
+    
         if resume is not None:
             self.load_state_dict(load_sd(resume))
     
     def res(self, batch_size, height, width):
         broadcast_param = [param.repeat(batch_size, 1, height//down, width//down) for param, down in zip(self.params, self.down)]
         down_block_additional_residuals = broadcast_param[:-1 if self.has_mid else None]
-        mid_block_additional_residual = broadcast_param[-1] if self.has_mid else None
+        mid_block_additional_residual = broadcast_param[-1] if self.has_mid else torch.zeros(batch_size, 1280, height//self.down[-1], width//self.down[-1]).to(broadcast_param[0].device)
         
         return down_block_additional_residuals, mid_block_additional_residual
     
