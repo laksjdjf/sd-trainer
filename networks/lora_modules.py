@@ -141,7 +141,7 @@ class LoRAModule(BaseModule):
         else:
             return self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
 
-    def forward(self, x):
+    def forward(self, x, scale = None):
         if self.multiplier == 0.0:
             return self.org_forward(x)
         else:
@@ -341,7 +341,7 @@ class LohaModule(BaseModule):
         return (d_weight).reshape(self.shape) * multiplier * self.scale
 
     @torch.enable_grad()
-    def forward(self, x):
+    def forward(self, x, scale = None):
         if self.multiplier == 0.0:
             return self.org_module[0](x)
         # print(torch.mean(torch.abs(self.orig_w1a.to(x.device) - self.hada_w1_a)), end='\r')
@@ -367,3 +367,61 @@ class LohaModule(BaseModule):
             bias,
             **self.extra_args
         )
+
+class OFTModule(BaseModule):
+    # replaces forward method of the original Linear, instead of replacing the original Linear module.
+
+    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, rank=4, alpha=1e-3, forward_mode=None):
+        """ 
+        rank -> number of blocks
+        alpha -> constraint
+        """
+        super().__init__()
+        self.lora_name = lora_name
+        self.num_blocks = rank
+        self.constraint = alpha
+        self.ema = False
+
+        if 'Linear' in org_module.__class__.__name__:
+            out_dim = org_module.out_features
+        elif 'Conv' in org_module.__class__.__name__:
+            out_dim = org_module.out_channels
+
+        self.block_size = out_dim // self.num_blocks
+        self.oft_blocks = nn.Parameter(torch.zeros(self.num_blocks, self.block_size, self.block_size))
+
+        self.out_dim = out_dim
+        self.shape = org_module.weight.shape
+
+        self.multiplier = multiplier
+        self.org_module = [org_module] # moduleにならないようにlistに入れる
+
+    def get_weight(self, multiplier=None):
+        if multiplier is None:
+            multiplier = self.multiplier
+
+        block_Q = self.oft_blocks - self.oft_blocks.transpose(1, 2)
+        norm_Q = torch.norm(block_Q.flatten())
+        new_norm_Q = torch.clamp(norm_Q, max=self.constraint)
+        block_Q = block_Q * ((new_norm_Q + 1e-8) / (norm_Q + 1e-8))
+        I = torch.eye(self.block_size, device=self.oft_blocks.device).unsqueeze(0).repeat(self.num_blocks, 1, 1)
+        block_R = torch.matmul(I + block_Q, (I - block_Q).inverse())
+
+        block_R_weighted = self.multiplier * block_R + (1 - self.multiplier) * I
+        R = torch.block_diag(*block_R_weighted)
+
+        return R
+
+    def forward(self, x, scale = None):
+        x = self.org_forward(x)
+        if self.multiplier == 0.0:
+            return x
+        else:
+            R = self.get_weight()
+            if x.dim() == 4:
+                x = x.permute(0, 2, 3, 1)
+                x = torch.matmul(x, R)
+                x = x.permute(0, 3, 1, 2)
+            else:
+                x = torch.matmul(x, R)
+            return x
