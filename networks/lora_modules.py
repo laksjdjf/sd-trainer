@@ -379,13 +379,15 @@ class OFTModule(BaseModule):
         super().__init__()
         self.lora_name = lora_name
         self.num_blocks = rank
-        self.constraint = alpha
+
         self.ema = False
 
         if 'Linear' in org_module.__class__.__name__:
             out_dim = org_module.out_features
         elif 'Conv' in org_module.__class__.__name__:
             out_dim = org_module.out_channels
+
+        self.constraint = alpha * out_dim
 
         self.block_size = out_dim // self.num_blocks
         self.oft_blocks = nn.Parameter(torch.zeros(self.num_blocks, self.block_size, self.block_size))
@@ -425,3 +427,20 @@ class OFTModule(BaseModule):
             else:
                 x = torch.matmul(x, R)
             return x
+        
+    def merge_to(self, multiplier=None, sign=1):
+        R = self.get_weight(multiplier) * sign
+    
+        # get org weight
+        org_sd = self.org_module[0].state_dict()
+        org_weight = org_sd["weight"]
+        R = R.to(org_weight.device, dtype=org_weight.dtype)
+
+        if org_weight.dim() == 4:
+            weight = torch.einsum("oihw, op -> pihw", org_weight, R)
+        else:
+            weight = torch.einsum("oi, op -> pi", org_weight, R)
+
+        # set weight to org_module
+        org_sd["weight"] = weight
+        self.org_module[0].load_state_dict(org_sd)
