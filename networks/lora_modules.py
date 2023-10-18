@@ -444,3 +444,91 @@ class OFTModule(BaseModule):
         # set weight to org_module
         org_sd["weight"] = weight
         self.org_module[0].load_state_dict(org_sd)
+
+def get_random_weight(shape, device, dtype):
+    SEED = 4545
+    cpu_rng_state = torch.get_rng_state()
+    gpu_rng_state = torch.cuda.get_rng_state()
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
+    weight = torch.nn.init.kaiming_uniform_(torch.empty(shape, device=device, dtype=dtype))
+    torch.set_rng_state(cpu_rng_state)
+    torch.cuda.set_rng_state(gpu_rng_state)
+
+    return weight
+
+class VeRAModule(BaseModule):
+    # replaces forward method of the original Linear, instead of replacing the original Linear module.
+
+    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, lora_rank=4, alpha=1, forward_mode=None):
+        """ if alpha == 0 or None, alpha is rank (no scaling). """
+        super().__init__()
+        self.lora_name = lora_name
+        self.lora_rank = lora_rank
+        self.forward_mode = forward_mode
+        self.ema = False
+
+        if 'Linear' in org_module.__class__.__name__:
+            in_dim = org_module.in_features
+            out_dim = org_module.out_features
+
+            self.op = F.linear
+            self.extra_args = {}
+            kernel_size = (1, ) # 便宜上の定義
+        elif 'Conv' in org_module.__class__.__name__:
+            in_dim = org_module.in_channels
+            out_dim = org_module.out_channels
+
+            self.lora_rank = min(self.lora_rank, in_dim, out_dim)
+            if self.lora_rank != lora_rank:
+                print(f"{lora_name} dim (rank) is changed to: {self.lora_rank}")
+
+            kernel_size = org_module.kernel_size
+            stride = org_module.stride
+            padding = org_module.padding
+            
+            self.op = F.conv2d
+            self.extra_args = {
+                "stride": stride,
+                "padding": padding
+            }
+
+        # vera
+        self.wb = torch.nn.Parameter(torch.zeros(out_dim))
+        self.wd = torch.nn.Parameter(torch.ones(lora_rank))
+
+        self.down_shape = (lora_rank, in_dim * kernel_size[0] * kernel_size[-1])
+        self.up_shape = (out_dim, lora_rank)
+
+        self.register_buffer("kernel_size", torch.tensor(kernel_size))
+
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.shape = org_module.weight.shape
+
+        self.multiplier = multiplier
+        self.scale = 1 # いらないらしい？
+        self.org_module = [org_module] # moduleにならないようにlistに入れる
+
+    def get_weight(self, multiplier=None):
+        if multiplier is None:
+            multiplier = self.multiplier
+
+        down_weight = get_random_weight(self.down_shape, self.wd.device, self.wd.dtype)
+        up_weight = get_random_weight(self.up_shape, self.wb.device, self.wb.dtype)
+        
+        down_weight =  self.wd.diag() @ down_weight
+
+        lora_weight = up_weight @ down_weight  # out_dim, in_dim*kernel*kernel
+        lora_weight = self.wb.diag() @ lora_weight
+        lora_weight = lora_weight.view(self.shape)
+
+        return lora_weight * multiplier * self.scale
+
+    def forward(self, x, scale = None):
+        if self.multiplier == 0.0:
+            return self.org_forward(x)
+        else:
+            weight = self.get_weight() + self.org_module[0].weight
+            bias = None if self.org_module[0].bias is None else self.org_module[0].bias
+            return self.op(x, weight, bias, **self.extra_args)
