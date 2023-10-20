@@ -446,6 +446,18 @@ class OFTModule(BaseModule):
         self.org_module[0].load_state_dict(org_sd)
 
 def get_random_weight(shape, device, dtype):
+    '''
+    seedを固定することでランダム行列の保存を防ぎたいが、
+    1.デバイスによって結果が変わってしまう？
+    2.CPUで作った方が環境の影響を受けにくそうだが遅くなる
+
+    代替案
+    1.CPUで最初につくってGPUに保存しておく⇒VRAM使用量増加
+
+    サイズについて、
+    LinearもConvも全て2Dテンソルにする。LoRAの形式を維持するとview()で時間がかる。
+
+    '''
     SEED = 4545
     cpu_rng_state = torch.get_rng_state()
     gpu_rng_state = torch.cuda.get_rng_state()
@@ -462,11 +474,14 @@ class VeRAModule(BaseModule):
 
     def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, lora_rank=4, alpha=1, forward_mode=None):
         """ if alpha == 0 or None, alpha is rank (no scaling). """
+
         super().__init__()
+
+        # 変数名がLoRAのまま
         self.lora_name = lora_name
         self.lora_rank = lora_rank
-        self.forward_mode = forward_mode
-        self.ema = False
+        self.forward_mode = forward_mode # 使わない
+        self.ema = False # 実装してない
 
         if 'Linear' in org_module.__class__.__name__:
             in_dim = org_module.in_features
@@ -494,13 +509,16 @@ class VeRAModule(BaseModule):
             }
 
         # vera
-        self.wb = torch.nn.Parameter(torch.zeros(out_dim))
-        self.wd = torch.nn.Parameter(torch.ones(lora_rank))
+        self.vera_b = torch.nn.Parameter(torch.zeros(out_dim))
+        self.vera_d = torch.nn.Parameter(torch.ones(lora_rank))
 
         self.down_shape = (lora_rank, in_dim * kernel_size[0] * kernel_size[-1])
         self.up_shape = (out_dim, lora_rank)
 
+        # パラメータから予測できない数値を保存
+        # 本当はkey名から取得すべき
         self.register_buffer("kernel_size", torch.tensor(kernel_size))
+        self.register_buffer("input_dim", torch.tensor([in_dim]))
 
         self.in_dim = in_dim
         self.out_dim = out_dim
@@ -514,13 +532,13 @@ class VeRAModule(BaseModule):
         if multiplier is None:
             multiplier = self.multiplier
 
-        down_weight = get_random_weight(self.down_shape, self.wd.device, self.wd.dtype)
-        up_weight = get_random_weight(self.up_shape, self.wb.device, self.wb.dtype)
+        down_weight = get_random_weight(self.down_shape, self.vera_d.device, self.vera_d.dtype)
+        up_weight = get_random_weight(self.up_shape, self.vera_b.device, self.vera_b.dtype)
         
-        down_weight =  self.wd.diag() @ down_weight
+        down_weight =  self.vera_d.diag() @ down_weight
 
-        lora_weight = up_weight @ down_weight  # out_dim, in_dim*kernel*kernel
-        lora_weight = self.wb.diag() @ lora_weight
+        lora_weight = up_weight @ down_weight 
+        lora_weight = self.vera_b.diag() @ lora_weight
         lora_weight = lora_weight.view(self.shape)
 
         return lora_weight * multiplier * self.scale
