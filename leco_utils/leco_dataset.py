@@ -47,7 +47,7 @@ class TextEmbeddingDataset(torch.utils.data.Dataset):
                     projection = None
                 batch[key] = (text_emb, projection)
             else:
-                batch[key] = None
+                batch[key] = (None, None)
         for key in ["guidance_scale"]:
             batch[key] = self.text_embedding_list[idx][key]
         return batch

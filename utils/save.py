@@ -18,6 +18,7 @@ DIRECTORIES = [
     "trained/controlnet",
     "trained/embeddings",
     "trained/ip_adapter",
+    "trained/additional_skip",
 ]
 
 class Save:
@@ -84,7 +85,7 @@ class Save:
         self.seed = seed
 
     @torch.no_grad()
-    def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None, ip_adapter=None, clip_vision=None):
+    def __call__(self, steps, final, logs, batch, text_model, unet, vae, scheduler, network=None, pfg=None, controlnet=None, ip_adapter=None, clip_vision=None, additional_skip=None):
         if self.wandb:
             self.run.log(logs, step=steps)
             
@@ -116,6 +117,9 @@ class Save:
 
             if ip_adapter is not None and self.config.ip_adapter.train:
                 ip_adapter.save_ip_adapter(os.path.join("trained/ip_adapter", filename + '.bin'))
+            
+            if additional_skip is not None:
+                additional_skip.save_weights(os.path.join("trained/additional_skip", filename))
 
             # 検証画像生成
             torch.cuda.empty_cache()
@@ -180,6 +184,7 @@ class Save:
                         controlnet=controlnet,
                         guide_image=guide_image,
                         text_embeds=text_embed,
+                        additional_skip=additional_skip,
                         seed=self.seed + i,
                     )[0]
                     if self.wandb:

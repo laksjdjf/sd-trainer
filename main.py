@@ -12,7 +12,7 @@ from diffusers import  DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils.model import load_model, patch_mid_block_checkpointing
-from utils.functions import collate_fn, get_attr_from_config, default
+from utils.functions import collate_fn, get_attr_from_config, default, load_sd
 
 def main(config):
     seed = default(config.train, "seed", None)
@@ -74,7 +74,11 @@ def main(config):
         if config.network.resume is None:
             network = network_class(text_model, unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
         else:
-            network = network_class.from_file(text_model, unet, config.network.resume)
+            try:
+                network = network_class.from_file(text_model, unet, config.network.resume)
+            except:
+                network = network_class(text_model, unet, config.feature.up_only, config.train.train_encoder, **config.network.args)
+                network.load_state_dict(load_sd(config.network.resume))
         network.train(config.network.train)
         network.requires_grad_(config.network.train)
         if config.network.train:
@@ -164,6 +168,18 @@ def main(config):
     else:
         textual_inversion = False
 
+    # addtional skipの準備
+    if hasattr(config, "additional_skip"):
+        from networks.additional_skip import AdditionalSkip
+        additional_skip = AdditionalSkip(**config.additional_skip.args)
+        additional_skip.train(config.additional_skip.train)
+        additional_skip.requires_grad_(config.additional_skip.train)
+        if config.additional_skip.train:
+            params.append({'params': additional_skip.parameters(), 'lr': unet_lr})
+        print("additional_skipを適用しました。")
+    else:
+        additional_skip = None
+
     # 最適化関数の設定
     optimizer_class = get_attr_from_config(config.optimizer.module)
     if hasattr(config.optimizer, "args"):
@@ -223,6 +239,8 @@ def main(config):
         ip_adapter.to(device, dtype=train_dtype if config.ip_adapter.train else weight_dtype)
         if clip_vision is not None:
             clip_vision.to(device, dtype=weight_dtype)
+    if additional_skip is not None:
+        additional_skip.to(device, dtype=train_dtype if config.additional_skip.train else weight_dtype)
 
     # sampling stepの範囲を指定
     step_range = [int(float(step)*noise_scheduler.num_train_timesteps) for step in config.feature.step_range.split(",")]
@@ -288,12 +306,12 @@ def main(config):
                 with torch.autocast("cuda", enabled=amp, dtype=weight_dtype):
                     network.set_cond_image(batch["control"].to(device, dtype=train_dtype))
             
+            noise = torch.randn_like(latents)
             if default(config.train,"noise_offset", False):
                 noise_offset = config.train.noise_offset * torch.randn(latents.shape[0], latents.shape[1], 1, 1)
                 noise = noise + noise_offset.to(noise.device, dtype=noise.dtype)
 
-            noise = torch.randn_like(latents)
-            bsz = latents.shape[0]
+            bsz, _, height, width = latents.shape
 
             if sdxl:
                 size_condition = batch["size_condition"].to(latents.device, dtype=latents.dtype)
@@ -317,6 +335,8 @@ def main(config):
                         added_cond_kwargs=added_cond_kwargs,
                         return_dict=False,
                     )
+                elif additional_skip is not None:
+                    down_block_res_samples, mid_block_res_sample = additional_skip.res(bsz, height, width)
                 else:
                     down_block_res_samples, mid_block_res_sample = None, None
 
@@ -363,7 +383,7 @@ def main(config):
             progress_bar.set_postfix(logs)
 
             final = total_steps == global_steps # 最後のステップかどうか
-            save(global_steps, final, logs, batch, text_model, unet, vae, noise_scheduler, network, pfg, controlnet, ip_adapter, clip_vision)
+            save(global_steps, final, logs, batch, text_model, unet, vae, noise_scheduler, network, pfg, controlnet, ip_adapter, clip_vision, additional_skip)
             if final:
                 return
 
