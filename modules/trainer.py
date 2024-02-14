@@ -170,7 +170,8 @@ class BaseTrainer:
         if "latents" in batch:
             latents = batch["latents"].to(self.device) * self.vae.scaling_factor
         else:
-            latents = self.encode_latents(batch["images"].to(self.device)) * self.vae.scaling_factor
+            with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
+                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample() * self.vae.scaling_factor
         
         self.batch_size = latents.shape[0] # stepメソッドでも使う
 
