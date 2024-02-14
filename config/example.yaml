@@ -1,0 +1,62 @@
+main:
+  model_path: "cagliostrolab/animagine-xl-3.0"
+  output_path: "output"
+  seed: 4545
+  sdxl: true
+  clip_skip: null
+  steps: null
+  epochs: 5
+  save_steps: null
+  save_epochs: 1
+  sample_steps: null
+  sample_epochs: 1
+  log_level: "logging.INFO"
+  wandb: sd-trainer
+
+trainer:
+  module: modules.trainer.BaseTrainer
+  train_unet: false
+  train_text_encoder: false
+  te_device: "cuda"
+  vae_device: "cuda"
+  train_dtype: torch.float32
+  weight_dtype: torch.bfloat16
+  autocast_dtype: null
+  vae_dtype: null
+  lr: "1e-3"
+  lr_scheduler: "cosine"
+  gradient_checkpointing: true
+  optimizer:
+    module: torch.optim.AdamW
+    args: null
+  validation_num_samples: 4
+  validation_seed: 4545
+  validation_args:
+    prompt: "1girl, solo"
+    negative_prompt: "lowres, bad anatomy, bad hands, worst quality"
+    width: 832
+    height: 1216
+
+dataset:
+  module: modules.dataset.BaseDataset
+  args:
+    batch_size: 1
+    path: "dataset"
+    metadata: "buckets.json"
+    original_size: "original_size.json"
+
+dataloader:
+  module: torch.utils.data.DataLoader
+  args:
+      num_workers: 4
+      shuffle: true
+
+network:
+  train: true
+  args:
+    module: networks.lora.LoRAModule
+    module_args:
+      rank: 4
+    conv_module_args:
+      rank: 4
+    text_module_args: null

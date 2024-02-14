@@ -1,8 +1,0 @@
-- target: "real life"
-  guidance_scale: -3.0
-
-- target: "realistic"
-  positive: "realistic"
-  negative: ""
-  neutral: ""
-  guidance_scale: -3.0
