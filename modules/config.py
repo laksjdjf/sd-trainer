@@ -41,6 +41,7 @@ class TrainerConfig:
     validation_num_samples: int = 4
     validation_seed: int = 4545
     validation_args: Dict[str, Any] = field(default_factory=dict)
+    additional_conf: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class DatasetArgs:
@@ -74,7 +75,8 @@ class DataLoaderConfig:
 
 @dataclass
 class NetworkArgs:
-    module: str = MISSING
+    module: Optional[str] = None
+    file_name: Optional[str] = None
     unet_key_filters: Optional[List[str]] = None
     module_args: Optional[Dict[str, Any]] = None
     conv_module_args: Optional[Dict[str, Any]] = None

@@ -80,6 +80,9 @@ class BaseTrainer:
         self.diffusion.unet.to(device, dtype=dtype).eval()
         self.text_model.to(device, dtype=dtype).eval()
         self.vae.to(device, dtype=self.vae_dtype).eval()
+
+        if self.network:
+            self.network.to(device, dtype=dtype).eval()
     
     def prepare_modules_for_training(self, device="cuda"):
         config = self.config
@@ -126,11 +129,13 @@ class BaseTrainer:
             self.network_train = False
             logger.info("ネットワークはないみたい。")
             return 
+        
         self.network = NetworkManager(
             text_model=self.text_model,
             unet=self.diffusion.unet,
             **config.args
         )
+        
         self.network_train = config.train
 
         self.network.to(self.device, self.train_dtype if self.network_train else self.weight_dtype)
@@ -138,6 +143,13 @@ class BaseTrainer:
         self.network.requires_grad_(self.network_train)
 
         logger.info("ネットワークを作ったよ！")
+
+    def prepare_network_from_file(self, file_name):
+        self.network = NetworkManager(
+            text_model=self.text_model,
+            unet=self.diffusion.unet,
+            file_name=file_name
+        )
 
     def prepare_optimizer(self):
         lrs = [float(lr) for lr in self.config.lr.split(",")]
@@ -236,7 +248,10 @@ class BaseTrainer:
             torch.manual_seed(seed)
             torch.cuda.manual_seed(seed)
 
-        prompt = [negative_prompt] * batch_size + [prompt] * batch_size
+        if guidance_scale != 1.0:
+            prompt = [negative_prompt] * batch_size + [prompt] * batch_size
+        else:
+            prompt = [prompt] * batch_size
 
         timesteps = self.scheduler.set_timesteps(num_inference_steps, self.device)
         timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
@@ -260,10 +275,13 @@ class BaseTrainer:
 
         for i, t in enumerate(timesteps):
             with torch.autocast("cuda", dtype=self.autocast_dtype):
-                latents_input = torch.cat([latents]*2)
+                latents_input = torch.cat([latents] * (2 if guidance_scale != 1.0 else 1), dim=0)
                 model_output = self.diffusion(latents_input, t, encoder_hidden_states, pooled_output)
-            uncond, cond = model_output.chunk(2)
-            model_output = uncond + guidance_scale * (cond - uncond)
+
+            if guidance_scale != 1.0:
+                uncond, cond = model_output.chunk(2)
+                model_output = uncond + guidance_scale * (cond - uncond)
+            
             if i+1 < len(timesteps):
                 latents = self.scheduler.step(latents, model_output, t, timesteps[i+1])
             else:

@@ -36,9 +36,16 @@ class BaseModule(torch.nn.Module):
 
 class LoRAModule(BaseModule):
 
-    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, rank=4, alpha=1):
+    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, state_dict=None, rank=4, alpha=1):
         super().__init__()
         self.lora_name = lora_name
+
+        if state_dict is not None:
+            up_weight = state_dict[f"{lora_name}.lora_up.weight"]
+            down_weight = state_dict[f"{lora_name}.lora_down.weight"]
+            alpha = state_dict[f"{lora_name}.alpha"]
+            rank = up_weight.shape[1]
+
         self.rank = rank
 
         if 'Linear' in org_module.__class__.__name__: # ["Linear", "LoRACompatibleLinear"]
@@ -69,12 +76,15 @@ class LoRAModule(BaseModule):
         if type(alpha) == torch.Tensor:
             alpha = alpha.detach().numpy()
         alpha = rank if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.rank
+
         self.register_buffer('alpha', torch.tensor(alpha))
 
-        # same as microsoft's
-        torch.nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
-        torch.nn.init.zeros_(self.lora_up.weight)
+        if state_dict is not None:
+            self.lora_down.weight = torch.nn.Parameter(down_weight.float())
+            self.lora_up.weight = torch.nn.Parameter(up_weight.float())
+        else:  # same as microsoft's
+            torch.nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
+            torch.nn.init.zeros_(self.lora_up.weight)
 
         self.multiplier = multiplier
         self.org_module = [org_module] # moduleにならないようにlistに入れる
@@ -90,10 +100,10 @@ class LoRAModule(BaseModule):
         lora_weight = up_weight @ down_weight  # out_dim, in_dim*kernel*kernel
         lora_weight = lora_weight.view(self.shape)  # out_dim, in_dim, [kernel, kernel]
 
-        return lora_weight * multiplier * self.scale
+        return lora_weight * multiplier * self.alpha / self.rank
 
     def lora_forward(self, x):
-        return self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+        return self.lora_up(self.lora_down(x)) * self.multiplier * self.alpha / self.rank
 
     def forward(self, x, scale = None):
         if self.multiplier == 0.0:
