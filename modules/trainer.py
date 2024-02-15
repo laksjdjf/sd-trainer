@@ -121,6 +121,11 @@ class BaseTrainer:
             logger.info("勾配チェックポイントを有効にしてみたよ！")
 
     def prepare_network(self, config):
+        if config is None:
+            self.network = None
+            self.network_train = False
+            logger.info("ネットワークはないみたい。")
+            return 
         self.network = NetworkManager(
             text_model=self.text_model,
             unet=self.diffusion.unet,

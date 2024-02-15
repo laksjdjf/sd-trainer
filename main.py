@@ -27,8 +27,7 @@ def main(config):
 
     trainer.prepare_modules_for_training()
 
-    if config.network is not None:
-        trainer.prepare_network(config.network)
+    trainer.prepare_network(config.network)
 
     trainer.prepare_optimizer()
 
