@@ -31,19 +31,25 @@ class BaseScheduler:
     def set_timesteps(self, num_inference_steps, device="cuda"):
         self.num_inference_steps = num_inference_steps
         timesteps = torch.linspace(0, self.num_timesteps-1, num_inference_steps+1, dtype=float).round()
-        return timesteps.flip(0)[:-1].clone().long().to(device) # [999, ... , 0]
-
-    def get_original_sample_and_noise(self, sample, model_output, t):
+        return timesteps.flip(0)[:-1].clone().long().to(device) # [999, ... , 0][:-1]
+    
+    def pred_original_sample(self, sample, model_output, t):
         sqrt_alphas_bar = substitution_t(self.sqrt_alphas_bar, t, sample.shape[0])
         sqrt_betas_bar = substitution_t(self.sqrt_betas_bar, t, sample.shape[0])
         
         if self.v_prediction:
-            pred_original_sample = sqrt_alphas_bar * sample - sqrt_betas_bar * model_output
-            noise_pred = sqrt_alphas_bar * model_output + sqrt_betas_bar * sample
+            return sqrt_alphas_bar * sample - sqrt_betas_bar * model_output
         else: # noise_prediction
-            pred_original_sample = (sample - sqrt_betas_bar * model_output) / sqrt_alphas_bar
-            noise_pred = model_output
-        return pred_original_sample, noise_pred
+            return (sample - sqrt_betas_bar * model_output) / sqrt_alphas_bar
+        
+    def pred_noise(self, sample, model_output, t):
+        sqrt_alphas_bar = substitution_t(self.sqrt_alphas_bar, t, model_output.shape[0])
+        sqrt_betas_bar = substitution_t(self.sqrt_betas_bar, t, model_output.shape[0])
+        
+        if self.v_prediction:
+            return sqrt_alphas_bar * model_output + sqrt_betas_bar * sample
+        else: # noise_prediction
+            return model_output
 
     # x0 -> xt    
     def add_noise(self, sample, noise, t):
@@ -54,8 +60,10 @@ class BaseScheduler:
     
     # x_t -> x_prev_t
     def step(self, sample, model_output, t, prev_t):
-        pred_original_sample, noise_pred = self.get_original_sample_and_noise(sample, model_output, t)
-        return self.add_noise(pred_original_sample, noise_pred, prev_t)
+        original_sample = self.pred_original_sample(sample, model_output, t)
+        noise_pred = self.pred_noise(sample, model_output, t)
+
+        return self.add_noise(original_sample, noise_pred, prev_t)
     
     def get_snr(self, t):
         alphas_bar = substitution_t(self.alphas_bar, t, t.shape[0])

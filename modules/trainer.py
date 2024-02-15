@@ -285,7 +285,7 @@ class BaseTrainer:
             if i+1 < len(timesteps):
                 latents = self.scheduler.step(latents, model_output, t, timesteps[i+1])
             else:
-                latents = self.scheduler.get_original_sample_and_noise(latents, model_output, t)[0]
+                latents = self.scheduler.pred_original_sample(latents, model_output, t)
             progress_bar.update(1)
 
         with torch.autocast("cuda", dtype=self.vae_dtype):
