@@ -1,0 +1,96 @@
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+from omegaconf import MISSING
+
+@dataclass
+class MainConfig:
+    model_path: str = MISSING
+    output_path: str = MISSING
+    seed: Optional[int] = 4545
+    sdxl: bool = MISSING
+    clip_skip: Optional[bool] = None
+    steps: Optional[int] = None
+    epochs: Optional[int] = None
+    save_steps: Optional[int] = None
+    save_epochs: Optional[int] = 1
+    sample_steps: Optional[int] = None
+    sample_epochs: Optional[int] = 1
+    log_level: str = "loggging.WARNING"
+    wandb: Optional[str] = None
+
+@dataclass
+class OptimizerConfig:
+    module: str = "torch.optim.AdamW"
+    args: Optional[Any] = None
+
+@dataclass
+class TrainerConfig:
+    module: str = "modules.trainer.BaseTrainer"
+    train_unet: bool = MISSING
+    train_text_encoder: bool = MISSING
+    te_device: Optional[str] = None
+    vae_device: Optional[str] = None
+    train_dtype: str = MISSING
+    weight_dtype: str = MISSING
+    autocast_dtype: Optional[str] = None
+    vae_dtype: Optional[str] = None
+    lr: str = MISSING
+    lr_scheduler: str = "constant"
+    gradient_checkpointing: bool = False
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    validation_num_samples: int = 4
+    validation_seed: int = 4545
+    validation_args: Dict[str, Any] = field(default_factory=dict)
+    additional_conf: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class DatasetArgs:
+    batch_size: int = MISSING
+    path: str = MISSING
+    metadata: str = "buckets.json"
+    original_size: Optional[str] = None
+    latent: Optional[str] = "latents"
+    caption: Optional[str] = "captions"
+    image: Optional[str] = None
+    text_emb: Optional[str] = None
+    prompt: Optional[str] = None
+    prefix: str = ""
+    shuffle: bool = False
+    ucg: float = 0.0
+
+@dataclass
+class DatasetConfig:
+    module: str = MISSING
+    args: DatasetArgs = field(default_factory=DatasetArgs)
+
+@dataclass
+class DataLoaderArgs:
+    num_workers: int = 0
+    shuffle: bool = True
+
+@dataclass
+class DataLoaderConfig:
+    module: str = MISSING
+    args: DataLoaderArgs = field(default_factory=DataLoaderArgs)
+
+@dataclass
+class NetworkArgs:
+    module: Optional[str] = None
+    file_name: Optional[str] = None
+    unet_key_filters: Optional[List[str]] = None
+    module_args: Optional[Dict[str, Any]] = None
+    conv_module_args: Optional[Dict[str, Any]] = None
+    text_module_args: Optional[Dict[str, Any]] = None
+
+@dataclass
+class NetworkConfig:
+    train: bool = MISSING
+    args: NetworkArgs = field(default_factory=NetworkArgs)
+
+@dataclass
+class Config:
+    main: MainConfig = field(default_factory=MainConfig)
+    trainer: TrainerConfig = field(default_factory=TrainerConfig)
+    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    dataloader: DataLoaderConfig = field(default_factory=DataLoaderConfig)
+    network: Optional[NetworkConfig] = None
