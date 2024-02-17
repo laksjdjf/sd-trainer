@@ -26,8 +26,9 @@ def main(config):
     dataloader = dataloder_cls(dataset, collate_fn=collate_fn, **config.dataloader.args)
 
     trainer.prepare_modules_for_training()
-
     trainer.prepare_network(config.network)
+    trainer.prepare_controlnet(config.controlnet)
+    trainer.apply_module_settings()
 
     trainer.prepare_optimizer()
 
@@ -63,7 +64,7 @@ def main(config):
             if current_step % save_interval == 0 or current_step == total_steps - 1:
                 trainer.save_model(config.main.output_path)
             if current_step % sample_interval == 0 or current_step == total_steps - 1:
-                images = trainer.sample_validation(current_step)
+                images = trainer.sample_validation(batch)
                 if wandb_run is not None:
                     images = [wandb.Image(image, caption=config.trainer.validation_args.prompt) for image in images]
                     wandb_run.log({'images': images}, step=current_step)

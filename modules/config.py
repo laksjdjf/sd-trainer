@@ -53,6 +53,7 @@ class DatasetArgs:
     caption: Optional[str] = "captions"
     image: Optional[str] = None
     text_emb: Optional[str] = None
+    control: Optional[str] = None
     prompt: Optional[str] = None
     prefix: str = ""
     shuffle: bool = False
@@ -88,9 +89,17 @@ class NetworkConfig:
     args: NetworkArgs = field(default_factory=NetworkArgs)
 
 @dataclass
+class ControlNetArgs:
+    train: bool = MISSING
+    resume: Optional[str] = None
+    transformer_layers_per_block: Optional[List[int]] = None
+    global_average_pooling: bool = False
+
+@dataclass
 class Config:
     main: MainConfig = field(default_factory=MainConfig)
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     dataloader: DataLoaderConfig = field(default_factory=DataLoaderConfig)
     network: Optional[NetworkConfig] = None
+    controlnet: Optional[ControlNetArgs] = None
