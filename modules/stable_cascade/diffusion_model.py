@@ -15,6 +15,9 @@ class CascadeDiffusionModel(nn.Module):
         if ratios.dim() == 0:
             ratios = ratios.repeat(latents.shape[0])
         
+        if clip_image is None:
+            clip_image = torch.zeros((latents.shape[0], 768), device=latents.device, dtype=latents.dtype)
+        
         model_output = self.unet(
             x=latents,
             r=ratios,
