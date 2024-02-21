@@ -100,7 +100,7 @@ class CascadeNetworkManager(NetworkManager):
                         lora_name = lora_name.replace('.', '_')
                         
                         if hasattr(child_module, "groups") and child_module.groups > 1:
-                            return
+                            continue
 
                         if state_dict is not None:
                             if target_keys and lora_name in target_keys:
