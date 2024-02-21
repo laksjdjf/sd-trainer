@@ -5,9 +5,10 @@ from modules.stable_cascade.diffusion_model import CascadeDiffusionModel
 from modules.stable_cascade.text_model import CascadeTextModel
 from modules.stable_cascade.scheduler import CosineScheduler
 from modules.stable_cascade.utils import load_model
+from modules.utils import get_attr_from_config
 from modules.trainer import BaseTrainer
 
-from networks.manager import NetworkManager
+from networks.stable_cascade.manager import CascadeNetworkManager
 from tqdm import tqdm
 from diffusers.optimization import get_scheduler
 from PIL import Image
@@ -32,7 +33,7 @@ for directory in DIRECTORIES:
     os.makedirs(directory, exist_ok=True)
 
 class CascadeTrainer(BaseTrainer):
-    def __init__(self, config, diffusion:CascadeDiffusionModel, text_model:CascadeTextModel, effnet, scheduler, previewer, network:NetworkManager=None):
+    def __init__(self, config, diffusion:CascadeDiffusionModel, text_model:CascadeTextModel, effnet, scheduler, previewer, network:CascadeNetworkManager=None):
         self.config = config
         self.diffusion = diffusion
         self.text_model = text_model
@@ -74,6 +75,106 @@ class CascadeTrainer(BaseTrainer):
 
         if self.network:
             self.network.to(device, dtype=dtype).eval()
+
+    def prepare_modules_for_training(self, device="cuda"):
+        config = self.config
+        self.device = device
+        self.te_device = config.te_device or device
+        self.vae_device = config.vae_device or device
+
+        self.train_dtype = get_attr_from_config(config.train_dtype)
+        self.weight_dtype = get_attr_from_config(config.weight_dtype)
+        self.autocast_dtype = get_attr_from_config(config.autocast_dtype) or self.weight_dtype
+        self.vae_dtype = get_attr_from_config(config.vae_dtype) or self.weight_dtype
+        self.te_dtype = self.train_dtype if config.train_text_encoder else self.weight_dtype
+
+        logger.info(f"学習対象モデルの型は{self.train_dtype}だって。")
+        logger.info(f"学習対象以外の型は{self.weight_dtype}だよ！")
+        logger.info(f"オートキャストの型は{self.autocast_dtype}にしちゃった。")
+
+        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.autocast_dtype == torch.float16)
+
+        self.diffusion.unet.to(device, dtype=self.train_dtype if config.train_unet else self.weight_dtype)
+        
+        self.text_model.to(self.te_device, dtype=self.te_dtype)
+        if  hasattr(torch, 'float8_e4m3fn') and self.te_dtype== torch.float8_e4m3fn:
+            self.text_model.set_embedding_dtype(self.autocast_dtype) # fp8時のエラー回避
+
+        self.effnet.to(self.vae_device, dtype=self.vae_dtype)
+        self.previewer.to(device, dtype=self.vae_dtype)
+
+        self.diffusion.unet.train(config.train_unet)
+        self.diffusion.unet.requires_grad_(config.train_unet)
+        self.text_model.train(config.train_text_encoder)
+        self.text_model.requires_grad_(config.train_text_encoder)
+        self.effnet.eval().requires_grad_(False)
+        self.previewer.eval().requires_grad_(False)
+
+    def prepare_network(self, config):
+        if config is None:
+            self.network = None
+            self.network_train = False
+            logger.info("ネットワークはないみたい。")
+            return 
+        
+        self.network = CascadeNetworkManager(
+            text_model=self.text_model,
+            unet=self.diffusion.unet,
+            **config.args
+        )
+        
+        self.network_train = config.train
+
+        self.network.to(self.device, self.train_dtype if self.network_train else self.weight_dtype)
+        self.network.train(self.network_train)
+        self.network.requires_grad_(self.network_train)
+
+        logger.info("ネットワークを作ったよ！")
+
+    def prepare_network_from_file(self, file_name):
+        self.network = CascadeNetworkManager(
+            text_model=self.text_model,
+            unet=self.diffusion.unet,
+            file_name=file_name
+        )
+
+    def loss(self, batch):
+        if "latents" in batch:
+            latents = batch["latents"].to(self.device) * self.vae.scaling_factor
+        else:
+            with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
+                norm = transforms.Compose(
+                    [
+                        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+                    ]
+                )
+                images = batch['images']
+                images = (images + 1) / 2 # datasetで[-1,1]　にしてる　改善予定
+                images_tensor = norm(images).to(self.effnet.device)
+                latents = self.effnet(images_tensor)
+        
+        self.batch_size = latents.shape[0] # stepメソッドでも使う
+
+        if "encoder_hidden_states" in batch:
+            encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
+            pooled_output = batch["pooled_outputs"].to(self.device)
+        else:
+            with torch.autocast("cuda", dtype=self.autocast_dtype):
+                encoder_hidden_states, pooled_output = self.text_model(batch["captions"])
+
+        timesteps = torch.randint(0, 1000, (self.batch_size,), device=latents.device)
+        noise = torch.randn_like(latents)
+        noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
+        
+        with torch.autocast("cuda", dtype=self.autocast_dtype):
+            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output)
+
+        target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
+
+        loss = nn.functional.mse_loss(model_output.float(), target.float(), reduction="mean")
+
+        return loss
+
     
     @torch.no_grad()
     def sample(
@@ -150,8 +251,8 @@ class CascadeTrainer(BaseTrainer):
         return images
     
     @classmethod
-    def from_pretrained(cls, path, effnet_path, previwer_path, config=None, network=None):
-        text_model, effnet, unet, scheduler, previewer = load_model(path, effnet_path, previwer_path)
+    def from_pretrained(cls, path, sdxl=False, clip_skip=None, config=None, network=None):
+        text_model, effnet, unet, scheduler, previewer = load_model(path)
         diffusion = CascadeDiffusionModel(unet)
         return cls(config, diffusion, text_model, effnet, scheduler, previewer, network)
 
