@@ -10,7 +10,7 @@ from networks.manager import NetworkManager
 logger = logging.getLogger("ネットワークちゃん")
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Linear"]
-UNET_TARGET_REPLACE_MODULE_CONV = ["Conv2D"]
+UNET_TARGET_REPLACE_MODULE_CONV = ["Conv2d"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
@@ -96,7 +96,7 @@ class CascadeNetworkManager(NetworkManager):
             if module.__class__.__name__ in target_replace_modules:
                 for child_name, child_module in module.named_modules():
                     if child_module.__class__.__name__ in ["Linear", "Conv2d", "LoRACompatibleLinear", "LoRACompatibleConv"]:
-                        lora_name = prefix + '.' + name + '.' + child_name
+                        lora_name = prefix + "." + name + ("." + child_name if child_name else "")
                         lora_name = lora_name.replace('.', '_')
                         
                         if hasattr(child_module, "groups") and child_module.groups > 1:
