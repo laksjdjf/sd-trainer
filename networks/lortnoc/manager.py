@@ -8,6 +8,7 @@ def zero_module(module):
         nn.init.zeros_(p)
     return module
 
+# https://github.com/huggingface/diffusers/blob/687bc2772721af584d649129f8d2a28ca56a9ad8/src/diffusers/models/controlnet.py#L66
 class ControlNetConditioningEmbedding(nn.Module):
     def __init__(
         self,
