@@ -40,6 +40,15 @@ class BaseTrainer:
         self.scheduler = BaseScheduler(scheduler.config.prediction_type == "v_prediction")
         self.sdxl = text_model.sdxl
 
+        if config is not None and config.merging_loras:
+            for lora in config.merging_loras:
+                NetworkManager(
+                    text_model=self.text_model,
+                    unet=self.diffusion.unet,
+                    file_name=lora,
+                    mode="merge"
+                )
+
     @torch.no_grad()
     def decode_latents(self, latents):
         self.vae.to("cuda")
@@ -124,11 +133,15 @@ class BaseTrainer:
             logger.info("ネットワークはないみたい。")
             return 
         
-        self.network = NetworkManager(
+        manager_cls = get_attr_from_config(config.module)
+        self.network = manager_cls(
             text_model=self.text_model,
             unet=self.diffusion.unet,
             **config.args
         )
+
+        if config.resume:
+            self.network.load_weights(config.resume)
         
         self.network_train = config.train
 
@@ -226,6 +239,8 @@ class BaseTrainer:
 
         if "controlnet_hint" in batch:
             controlnet_hint = batch["controlnet_hint"].to(self.device)
+            if hasattr(self.network, "set_controlnet_hint"):
+                self.network.set_controlnet_hint(controlnet_hint)
         else:
             controlnet_hint = None
 
@@ -311,9 +326,15 @@ class BaseTrainer:
         self.text_model.to(self.te_device)
 
         if controlnet_hint is not None:
+            if isinstance(controlnet_hint, str):
+                controlnet_hint = Image.open(controlnet_hint).convert("RGB")
+                controlnet_hint = transforms.ToTensor()(controlnet_hint).unsqueeze(0)
             controlnet_hint = controlnet_hint.to(self.device)
             if guidance_scale != 1.0:
                 controlnet_hint = torch.cat([controlnet_hint] *2)
+            
+            if hasattr(self.network, "set_controlnet_hint"):
+                self.network.set_controlnet_hint(controlnet_hint)
 
         progress_bar = tqdm(timesteps, desc="Sampling", leave=False, total=len(timesteps))
 
@@ -349,25 +370,11 @@ class BaseTrainer:
         if self.controlnet_train:
             self.diffusion.controlnet.save_pretrained(os.path.join("trained/controlnet", output_path))
 
-    def sample_validation(self, batch):
+    def sample_validation(self, step):
         logger.info(f"サンプルを生成するよ！")
         images = []
-
-        args = dict(self.config.validation_args)
-        if "controlnet_hint" in batch: # controlnetのhintはサイズ固定なのでbatchから取得
-            args_from_batch = True
-            args_target = "controlnet_hint"
-            num_samples = min(batch["controlnet_hint"].shape[0], self.config.validation_num_samples)
-            args["height"], args["width"] = batch["controlnet_hint"].shape[2:]
-        else:
-            args_from_batch = False
-            num_samples = self.config.validation_num_samples
-
-        for i in range(num_samples):
-            if args_from_batch:
-                args[args_target] = batch[args_target][i].unsqueeze(0)
-                args["prompt"] = batch["captions"][i]
-            image = self.sample(seed=self.config.validation_seed + i, **args)[0]
+        for i in range(self.config.validation_num_samples):
+            image = self.sample(seed=self.config.validation_seed + i, **self.config.validation_args)[0]
             images.append(image)
         torch.cuda.empty_cache()
         return images

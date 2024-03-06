@@ -38,6 +38,7 @@ class TrainerConfig:
     lr_scheduler: str = "constant"
     gradient_checkpointing: bool = False
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    merging_loras: Optional[List[str]] = None
     validation_num_samples: int = 4
     validation_seed: int = 4545
     validation_args: Dict[str, Any] = field(default_factory=dict)
@@ -85,6 +86,8 @@ class NetworkArgs:
 
 @dataclass
 class NetworkConfig:
+    module: str = "networks.manager.NetworkManager"
+    resume: Optional[str] = None
     train: bool = MISSING
     args: NetworkArgs = field(default_factory=NetworkArgs)
 
