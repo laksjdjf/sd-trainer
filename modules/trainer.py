@@ -23,6 +23,7 @@ DIRECTORIES = [
     "trained",
     "trained/models",
     "trained/networks",
+    "trained/controlnet",
 ]
 
 for directory in DIRECTORIES:
@@ -38,6 +39,15 @@ class BaseTrainer:
         self.diffusers_scheduler = scheduler # モデルのセーブ次にのみ利用
         self.scheduler = BaseScheduler(scheduler.config.prediction_type == "v_prediction")
         self.sdxl = text_model.sdxl
+
+        if config is not None and config.merging_loras:
+            for lora in config.merging_loras:
+                NetworkManager(
+                    text_model=self.text_model,
+                    unet=self.diffusion.unet,
+                    file_name=lora,
+                    mode="merge"
+                )
 
     @torch.no_grad()
     def decode_latents(self, latents):
@@ -116,13 +126,6 @@ class BaseTrainer:
         self.text_model.requires_grad_(config.train_text_encoder)
         self.vae.eval()
 
-        if config.gradient_checkpointing:
-            self.diffusion.enable_gradient_checkpointing()
-            self.text_model.enable_gradient_checkpointing()
-            self.diffusion.unet.train() # trainでないと適用されない。
-            self.text_model.train()
-            logger.info("勾配チェックポイントを有効にしてみたよ！")
-
     def prepare_network(self, config):
         if config is None:
             self.network = None
@@ -130,11 +133,15 @@ class BaseTrainer:
             logger.info("ネットワークはないみたい。")
             return 
         
-        self.network = NetworkManager(
+        manager_cls = get_attr_from_config(config.module)
+        self.network = manager_cls(
             text_model=self.text_model,
             unet=self.diffusion.unet,
             **config.args
         )
+
+        if config.resume:
+            self.network.load_weights(config.resume)
         
         self.network_train = config.train
 
@@ -143,6 +150,30 @@ class BaseTrainer:
         self.network.requires_grad_(self.network_train)
 
         logger.info("ネットワークを作ったよ！")
+    
+    def prepare_controlnet(self, config):
+        if config is None:
+            self.controlnet = None
+            self.controlnet_train = False
+            logger.info("コントロールネットはないみたい。")
+            return
+        
+        self.diffusion.create_controlnet(config)
+        self.controlnet_train = config.train
+
+        self.diffusion.controlnet.to(self.device, self.train_dtype if self.controlnet_train else self.weight_dtype)
+        self.diffusion.controlnet.train(self.controlnet_train)
+        self.diffusion.controlnet.requires_grad_(self.controlnet_train)
+
+        logger.info("コントロールネットを作ったよ！")
+
+    def apply_module_settings(self):
+        if self.config.gradient_checkpointing:
+            self.diffusion.enable_gradient_checkpointing()
+            self.text_model.enable_gradient_checkpointing()
+            self.diffusion.train() # trainでないと適用されない。
+            self.text_model.train()
+            logger.info("勾配チェックポイントを有効にしてみたよ！")
 
     def prepare_network_from_file(self, file_name):
         self.network = NetworkManager(
@@ -162,8 +193,10 @@ class BaseTrainer:
             params += [{"params":self.diffusion.unet.parameters(), "lr":unet_lr}]
         if self.config.train_text_encoder:
             params += [{"params":self.text_model.parameters(), "lr":text_lr}]
-        if self.network:
+        if self.network_train:
             params += self.network.prepare_optimizer_params(text_lr, unet_lr)
+        if self.controlnet_train:
+            params += [{"params":self.diffusion.controlnet.parameters(), "lr":unet_lr}]
 
         optimizer_cls = get_attr_from_config(self.config.optimizer.module)
         self.optimizer = optimizer_cls(params, **self.config.optimizer.args or {})
@@ -204,12 +237,19 @@ class BaseTrainer:
         else:
             size_condition = None
 
+        if "controlnet_hint" in batch:
+            controlnet_hint = batch["controlnet_hint"].to(self.device)
+            if hasattr(self.network, "set_controlnet_hint"):
+                self.network.set_controlnet_hint(controlnet_hint)
+        else:
+            controlnet_hint = None
+
         timesteps = torch.randint(0, 1000, (self.batch_size,), device=latents.device)
         noise = torch.randn_like(latents)
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
         
         with torch.autocast("cuda", dtype=self.autocast_dtype):
-            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition)
+            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition, controlnet_hint)
 
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
 
@@ -240,7 +280,21 @@ class BaseTrainer:
         return logs
     
     @torch.no_grad()
-    def sample(self, prompt="", negative_prompt="", batch_size=1, height=768, width=768, num_inference_steps=30, guidance_scale=7.0, denoise=1.0, seed=4545, images=None):
+    def sample(
+        self, 
+        prompt="", 
+        negative_prompt="", 
+        batch_size=1, 
+        height=768, 
+        width=768, 
+        num_inference_steps=30, 
+        guidance_scale=7.0, 
+        denoise=1.0, 
+        seed=4545, 
+        images=None, 
+        controlnet_hint=None, 
+        **kwargs
+    ):
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state()
         
@@ -271,12 +325,23 @@ class BaseTrainer:
             encoder_hidden_states, pooled_output = self.text_model(prompt)
         self.text_model.to(self.te_device)
 
+        if controlnet_hint is not None:
+            if isinstance(controlnet_hint, str):
+                controlnet_hint = Image.open(controlnet_hint).convert("RGB")
+                controlnet_hint = transforms.ToTensor()(controlnet_hint).unsqueeze(0)
+            controlnet_hint = controlnet_hint.to(self.device)
+            if guidance_scale != 1.0:
+                controlnet_hint = torch.cat([controlnet_hint] *2)
+            
+            if hasattr(self.network, "set_controlnet_hint"):
+                self.network.set_controlnet_hint(controlnet_hint)
+
         progress_bar = tqdm(timesteps, desc="Sampling", leave=False, total=len(timesteps))
 
         for i, t in enumerate(timesteps):
             with torch.autocast("cuda", dtype=self.autocast_dtype):
                 latents_input = torch.cat([latents] * (2 if guidance_scale != 1.0 else 1), dim=0)
-                model_output = self.diffusion(latents_input, t, encoder_hidden_states, pooled_output)
+                model_output = self.diffusion(latents_input, t, encoder_hidden_states, pooled_output, controlnet_hint=controlnet_hint)
 
             if guidance_scale != 1.0:
                 uncond, cond = model_output.chunk(2)
@@ -302,6 +367,8 @@ class BaseTrainer:
             self.save_pretrained(os.path.join("trained/models", output_path))
         if self.network_train:
             self.network.save_weights(os.path.join("trained/networks", output_path))
+        if self.controlnet_train:
+            self.diffusion.controlnet.save_pretrained(os.path.join("trained/controlnet", output_path))
 
     def sample_validation(self, step):
         logger.info(f"サンプルを生成するよ！")
@@ -342,6 +409,6 @@ class BaseTrainer:
         if clip_skip is None:
             clip_skip = -2 if sdxl else -1
         text_model, vae, unet, scheduler = load_model(path, sdxl, clip_skip)
-        diffusion = DiffusionModel(unet, sdxl)
+        diffusion = DiffusionModel(unet, sdxl=sdxl)
         return cls(config, diffusion, text_model, vae, scheduler, network)
 

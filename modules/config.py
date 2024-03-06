@@ -38,6 +38,7 @@ class TrainerConfig:
     lr_scheduler: str = "constant"
     gradient_checkpointing: bool = False
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    merging_loras: Optional[List[str]] = None
     validation_num_samples: int = 4
     validation_seed: int = 4545
     validation_args: Dict[str, Any] = field(default_factory=dict)
@@ -53,6 +54,7 @@ class DatasetArgs:
     caption: Optional[str] = "captions"
     image: Optional[str] = None
     text_emb: Optional[str] = None
+    control: Optional[str] = None
     prompt: Optional[str] = None
     prefix: str = ""
     shuffle: bool = False
@@ -84,8 +86,17 @@ class NetworkArgs:
 
 @dataclass
 class NetworkConfig:
+    module: str = "networks.manager.NetworkManager"
+    resume: Optional[str] = None
     train: bool = MISSING
     args: NetworkArgs = field(default_factory=NetworkArgs)
+
+@dataclass
+class ControlNetArgs:
+    train: bool = MISSING
+    resume: Optional[str] = None
+    transformer_layers_per_block: Optional[List[int]] = None
+    global_average_pooling: bool = False
 
 @dataclass
 class Config:
@@ -94,3 +105,4 @@ class Config:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     dataloader: DataLoaderConfig = field(default_factory=DataLoaderConfig)
     network: Optional[NetworkConfig] = None
+    controlnet: Optional[ControlNetArgs] = None

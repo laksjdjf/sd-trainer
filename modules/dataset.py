@@ -24,6 +24,7 @@ class BaseDataset(Dataset):
         caption: Optional[str] = "captions",
         image: Optional[str] = None,
         text_emb: Optional[str] = None,
+        control: Optional[str] = None,
         prompt: Optional[str] = None,
         prefix: str = "",
         shuffle: bool = False,
@@ -46,6 +47,7 @@ class BaseDataset(Dataset):
         self.caption = caption
         self.image = image
         self.text_emb = text_emb
+        self.control = control
         self.prompt = prompt  # 全ての画像のcaptionをpromptにする
         self.prefix = prefix  # captionのprefix
         self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
@@ -88,6 +90,9 @@ class BaseDataset(Dataset):
             batch["encoder_hidden_states"], batch["pooled_outputs"] = self.get_text_embeddings(samples, self.text_emb if isinstance(self.text_emb, str) else "text_emb")
         else:
             batch["captions"] = self.get_captions(samples, self.caption)
+
+        if self.control:
+            batch["controlnet_hint"] = self.get_control(samples, self.control if isinstance(self.control, str) else "control")
 
         return batch
 
@@ -181,3 +186,12 @@ class BaseDataset(Dataset):
         ])
         pooled_outputs.to(memory_format=torch.contiguous_format).float()
         return encoder_hidden_states, pooled_outputs
+    
+    def get_control(self, samples, dir="control"):
+        images = []
+        transform = transforms.ToTensor()
+        for sample in samples:
+            image = Image.open(os.path.join(self.path, dir, sample + f".png")).convert("RGB")
+            images.append(transform(image))
+        images_tensor = torch.stack(images).to(memory_format=torch.contiguous_format).float()
+        return images_tensor
