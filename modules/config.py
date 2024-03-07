@@ -36,6 +36,7 @@ class TrainerConfig:
     vae_dtype: Optional[str] = None
     lr: str = MISSING
     lr_scheduler: str = "constant"
+    noise_offset: float = 0.0
     gradient_checkpointing: bool = False
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     merging_loras: Optional[List[str]] = None

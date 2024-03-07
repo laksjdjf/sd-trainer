@@ -246,6 +246,8 @@ class BaseTrainer:
 
         timesteps = torch.randint(0, 1000, (self.batch_size,), device=latents.device)
         noise = torch.randn_like(latents)
+        if self.config.noise_offset != 0:
+            noise += self.config.noise_offset * torch.randn(noise.shape[0], noise.shape[1], 1, 1).to(noise)
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
         
         with torch.autocast("cuda", dtype=self.autocast_dtype):
