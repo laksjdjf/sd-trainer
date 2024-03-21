@@ -69,10 +69,10 @@ class NetworkManager(nn.Module):
         if state_dict or text_module_args is not None:
             self.text_encoder_modules = []
             if text_model.sdxl:
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_1, text_model, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te1_keys)
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_2, text_model, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te2_keys)
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_1, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te1_keys)
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_2, text_model.text_encoder_2, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te2_keys)
             else:
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER, text_model, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te_keys)
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te_keys)
         else:
             self.text_encoder_modules = []
 
