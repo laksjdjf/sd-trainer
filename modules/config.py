@@ -46,25 +46,9 @@ class TrainerConfig:
     additional_conf: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
-class DatasetArgs:
-    batch_size: int = MISSING
-    path: str = MISSING
-    metadata: str = "buckets.json"
-    original_size: Optional[str] = None
-    latent: Optional[str] = "latents"
-    caption: Optional[str] = "captions"
-    image: Optional[str] = None
-    text_emb: Optional[str] = None
-    control: Optional[str] = None
-    prompt: Optional[str] = None
-    prefix: str = ""
-    shuffle: bool = False
-    ucg: float = 0.0
-
-@dataclass
 class DatasetConfig:
     module: str = MISSING
-    args: DatasetArgs = field(default_factory=DatasetArgs)
+    args: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class DataLoaderArgs:
