@@ -36,9 +36,10 @@ class BaseModule(torch.nn.Module):
 
 class LoRAModule(BaseModule):
 
-    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, state_dict=None, rank=4, alpha=1):
+    def __init__(self, lora_name, org_module: torch.nn.Module, multiplier=1.0, state_dict=None, rank=4, alpha=1, forward_mode="sequential"):
         super().__init__()
         self.lora_name = lora_name
+        self.forward_mode = forward_mode
 
         if state_dict is not None:
             up_weight = state_dict[f"{lora_name}.lora_up.weight"]
@@ -55,6 +56,9 @@ class LoRAModule(BaseModule):
             self.lora_down = torch.nn.Linear(in_dim, rank, bias=False)
             self.lora_up = torch.nn.Linear(rank, out_dim, bias=False)
 
+            self.functional = torch.nn.functional.linear
+            self.functional_args = {}
+
         elif 'Conv' in org_module.__class__.__name__: # ["Conv2d", "LoRACompatibleConv"]
             in_dim = org_module.in_channels
             out_dim = org_module.out_channels
@@ -70,6 +74,12 @@ class LoRAModule(BaseModule):
                 in_dim, self.rank, kernel_size, stride, padding, bias=False)
             self.lora_up = torch.nn.Conv2d(
                 self.rank, out_dim, (1, 1), (1, 1), bias=False)
+            
+            self.functional = torch.nn.functional.conv2d
+            self.functional_args = {
+                "stride": stride,
+                "padding": padding,
+            }
 
         self.shape = org_module.weight.shape
 
@@ -108,5 +118,9 @@ class LoRAModule(BaseModule):
     def forward(self, x, scale = None):
         if self.multiplier == 0.0:
             return self.org_forward(x)
-        else:
+        if self.forward_mode == "sequential":
             return self.org_forward(x) + self.lora_forward(x)
+        elif self.forward_mode == "merge":
+            weight = self.org_module[0].state_dict()["weight"]
+            bias = None if "bias" not in self.org_module[0].state_dict() else self.org_module[0].state_dict()["bias"]
+            return self.functional(x, weight + self.get_weight(), bias, **self.functional_args)

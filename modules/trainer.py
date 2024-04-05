@@ -39,6 +39,7 @@ class BaseTrainer:
         self.diffusers_scheduler = scheduler # モデルのセーブ次にのみ利用
         self.scheduler = BaseScheduler(scheduler.config.prediction_type == "v_prediction")
         self.sdxl = text_model.sdxl
+        self.scaling_factor = 0.13025 if self.sdxl else 0.18215
 
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
@@ -218,10 +219,10 @@ class BaseTrainer:
     
     def loss(self, batch):
         if "latents" in batch:
-            latents = batch["latents"].to(self.device) * self.vae.scaling_factor
+            latents = batch["latents"].to(self.device) * self.scaling_factor
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample() * self.vae.scaling_factor
+                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample() * self.scaling_factor
         
         self.batch_size = latents.shape[0] # stepメソッドでも使う
 
@@ -316,7 +317,7 @@ class BaseTrainer:
             latents = torch.zeros(batch_size, 4, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype):
-                latents = self.encode_latents(images) * self.vae.scaling_factor
+                latents = self.encode_latents(images) * self.scaling_factor
             latents.to(dtype=self.autocast_dtype)
 
         noise = torch.randn_like(latents)
