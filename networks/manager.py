@@ -59,6 +59,11 @@ class NetworkManager(nn.Module):
         te2_keys = [key for key in keys if LORA_PREFIX_TEXT_ENCODER_2 in key]
 
         self.module = get_attr_from_config(module)
+
+        if hasattr(conv_module_args, "same") and conv_module_args.same:
+            conv_module_args = module_args
+        if hasattr(text_module_args, "same") and text_module_args.same:
+            text_module_args = module_args
         
         # unetのloraを作る
         self.unet_modules = []
