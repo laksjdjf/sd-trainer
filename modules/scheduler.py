@@ -33,6 +33,10 @@ class BaseScheduler:
         timesteps = torch.linspace(0, self.num_timesteps-1, num_inference_steps+1, dtype=float).round()
         return timesteps.flip(0)[:-1].clone().long().to(device) # [999, ... , 0][:-1]
     
+    def sample_timesteps(self, batch_size, device="cuda"):
+        timesteps = torch.randint(0, self.num_timesteps, (batch_size,), device=device)
+        return timesteps
+    
     def pred_original_sample(self, sample, model_output, t):
         sqrt_alphas_bar = substitution_t(self.sqrt_alphas_bar, t, sample.shape[0])
         sqrt_betas_bar = substitution_t(self.sqrt_betas_bar, t, sample.shape[0])

@@ -245,7 +245,7 @@ class BaseTrainer:
         else:
             controlnet_hint = None
 
-        timesteps = torch.randint(0, 1000, (self.batch_size,), device=latents.device)
+        timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device)
         noise = torch.randn_like(latents)
         if self.config.noise_offset != 0:
             noise += self.config.noise_offset * torch.randn(noise.shape[0], noise.shape[1], 1, 1).to(noise)
