@@ -9,12 +9,16 @@ class SD3Scheduler:
     def __init__(self, v_prediction=False):
         self.v_prediction = v_prediction
         self.num_timesteps = 1000
+        self.shift = 3
         return
 
     def set_timesteps(self, num_inference_steps, device="cuda"):
         self.num_inference_steps = num_inference_steps
-        timesteps = torch.linspace(0, self.num_timesteps-1, num_inference_steps+1, dtype=float).round()
-        return timesteps.flip(0)[:-1].clone().long().to(device) # [999, ... , 0][:-1]
+        timesteps = torch.linspace(0, 1, num_inference_steps+1, dtype=float)
+        timesteps = timesteps.flip(0)[:-1]
+        timesteps = (timesteps * self.shift) / (1 + (self.shift - 1) * timesteps)
+        timesteps *= 1000
+        self.timesteps = timesteps.to(device)
     
     def sample_timesteps(self, batch_size, device="cuda"):
         # must be changed 
@@ -37,7 +41,7 @@ class SD3Scheduler:
         return sample - model_output * mult
     
     def get_model_pred(self, sample, model_output, t):
-        return self.pred_original_sample(sample, model_output, t)
+        return model_output
     
     def get_target(self, sample, noise, t):
-        return sample
+        return noise - sample
