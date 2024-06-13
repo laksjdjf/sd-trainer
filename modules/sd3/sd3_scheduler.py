@@ -36,5 +36,8 @@ class SD3Scheduler:
         mult = time_to_mult(t, sample)
         return sample - model_output * mult
     
+    def get_model_pred(self, sample, model_output, t):
+        return self.pred_original_sample(sample, model_output, t)
+    
     def get_target(self, sample, noise, t):
-        return sample - noise
+        return sample

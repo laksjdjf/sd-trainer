@@ -40,6 +40,8 @@ class BaseTrainer:
         self.scheduler = BaseScheduler(scheduler.config.prediction_type == "v_prediction")
         self.sdxl = text_model.sdxl
         self.scaling_factor = 0.13025 if self.sdxl else 0.18215
+        self.shift_factor = 0
+        self.input_channels = 4
 
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
@@ -219,10 +221,12 @@ class BaseTrainer:
     
     def loss(self, batch):
         if "latents" in batch:
-            latents = batch["latents"].to(self.device) * self.scaling_factor
+            latents = batch["latents"].to(self.device)
+            latents = (latents - self.shift_factor) * self.scaling_factor
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample() * self.scaling_factor
+                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
+                latents = (latents - self.shift_factor) * self.scaling_factor
         
         self.batch_size = latents.shape[0] # stepメソッドでも使う
 
@@ -254,9 +258,10 @@ class BaseTrainer:
         with torch.autocast("cuda", dtype=self.autocast_dtype):
             model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition, controlnet_hint)
 
+        model_pred = self.scheduler.get_model_pred(noisy_latents, model_output, timesteps)
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
 
-        loss = nn.functional.mse_loss(model_output.float(), target.float(), reduction="mean")
+        loss = nn.functional.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
         return loss
     
@@ -314,7 +319,7 @@ class BaseTrainer:
         timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
 
         if images is None:
-            latents = torch.zeros(batch_size, 4, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+            latents = torch.zeros(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype):
                 latents = self.encode_latents(images) * self.scaling_factor
@@ -357,7 +362,7 @@ class BaseTrainer:
             progress_bar.update(1)
 
         with torch.autocast("cuda", dtype=self.vae_dtype):
-            images = self.decode_latents(latents / self.vae.scaling_factor)
+            images = self.decode_latents(latents / self.scaling_factor + self.shift_factor)
         
         torch.set_rng_state(rng_state)
         torch.cuda.set_rng_state(cuda_rng_state)

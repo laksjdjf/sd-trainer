@@ -74,6 +74,9 @@ class BaseScheduler:
         betas_bar = substitution_t(self.betas_bar, t, t.shape[0])
         return alphas_bar / betas_bar
     
+    def get_model_pred(self, sample, model_output, t):
+        return model_output
+    
     def get_target(self, sample, noise, t):
         if self.v_prediction:
             sqrt_alphas_bar = substitution_t(self.sqrt_alphas_bar, t, sample.shape[0])
