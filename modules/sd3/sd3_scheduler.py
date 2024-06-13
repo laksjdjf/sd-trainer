@@ -18,12 +18,12 @@ class SD3Scheduler:
         timesteps = timesteps.flip(0)[:-1]
         timesteps = (timesteps * self.shift) / (1 + (self.shift - 1) * timesteps)
         timesteps *= 1000
-        self.timesteps = timesteps.to(device)
+        return timesteps.to(device)
     
     def sample_timesteps(self, batch_size, device="cuda"):
-        # must be changed 
-        timesteps = torch.randint(0, self.num_timesteps, (batch_size,), device=device)
-        return timesteps
+        indices = torch.randint(0, self.num_timesteps, (batch_size,), device=device)
+        timesteps = self.set_timesteps(self.num_timesteps, device)
+        return timesteps[indices]
 
     # x0 -> xt    
     def add_noise(self, sample, noise, t):
