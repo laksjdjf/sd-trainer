@@ -319,7 +319,8 @@ class BaseTrainer:
         timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
 
         if images is None:
-            latents = torch.zeros(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+            latents = torch.ones(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+            latents = latents * self.shift_factor
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype):
                 latents = self.encode_latents(images) * self.scaling_factor
