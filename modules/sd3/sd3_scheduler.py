@@ -21,9 +21,10 @@ class SD3Scheduler:
         return timesteps.to(device)
     
     def sample_timesteps(self, batch_size, device="cuda"):
-        indices = torch.randint(0, self.num_timesteps, (batch_size,), device=device)
-        timesteps = self.set_timesteps(self.num_timesteps, device)
-        return timesteps[indices]
+        logits_norm = torch.randn(batch_size, device=device)
+        timesteps = logits_norm.sigmoid()
+        timesteps = (timesteps * self.shift) / (1 + (self.shift - 1) * timesteps)
+        return timesteps * 1000
 
     # x0 -> xt    
     def add_noise(self, sample, noise, t):
@@ -39,9 +40,6 @@ class SD3Scheduler:
     def pred_original_sample(self, sample, model_output, t):
         mult = time_to_mult(t, sample)
         return sample - model_output * mult
-    
-    def get_model_pred(self, sample, model_output, t):
-        return model_output
     
     def get_target(self, sample, noise, t):
         return noise - sample

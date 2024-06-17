@@ -258,10 +258,9 @@ class BaseTrainer:
         with torch.autocast("cuda", dtype=self.autocast_dtype):
             model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition, controlnet_hint)
 
-        model_pred = self.scheduler.get_model_pred(noisy_latents, model_output, timesteps)
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
 
-        loss = nn.functional.mse_loss(model_pred.float(), target.float(), reduction="mean")
+        loss = nn.functional.mse_loss(model_output.float(), target.float(), reduction="mean")
 
         return loss
     
