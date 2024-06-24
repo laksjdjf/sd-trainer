@@ -8,11 +8,13 @@ import logging
 
 logger = logging.getLogger("ネットワークちゃん")
 
-UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel", "JointTransformerBlock"]
-UNET_TARGET_REPLACE_MODULE_ATTENTION = ["Transformer2DModel", "JointTransformerBlock"]
+UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
+UNET_TARGET_REPLACE_MODULE_ATTENTION = ["Transformer2DModel"]
+MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
+LORA_PREFIX_MMDIT = 'lora_transformer'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
 LORA_PREFIX_TEXT_ENCODER_1 = 'lora_te1'
 LORA_PREFIX_TEXT_ENCODER_2 = 'lora_te2'
@@ -69,6 +71,7 @@ class NetworkManager(nn.Module):
         self.unet_modules = []
         if state_dict or module_args is not None:
             self.unet_modules += self.create_modules(LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_TRANSFORMER, state_dict, module_args, unet_key_filters, unet_keys)
+            self.unet_modules += self.create_modules(LORA_PREFIX_MMDIT, unet, MMDIT_TARGET_REPLACE_MODULE, state_dict, module_args, unet_key_filters, unet_keys)
         if state_dict or conv_module_args is not None:
             self.unet_modules += self.create_modules(LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_CONV, state_dict, conv_module_args, unet_key_filters, unet_keys)
         if state_dict or text_module_args is not None:

@@ -222,11 +222,11 @@ class BaseTrainer:
     def loss(self, batch):
         if "latents" in batch:
             latents = batch["latents"].to(self.device)
-            latents = (latents - self.shift_factor) * self.scaling_factor
+            latents = latents * self.scaling_factor
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
                 latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
-                latents = (latents - self.shift_factor) * self.scaling_factor
+                latents = latents * self.scaling_factor
         
         self.batch_size = latents.shape[0] # stepメソッドでも使う
 
