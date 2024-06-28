@@ -319,11 +319,11 @@ class BaseTrainer:
 
         if images is None:
             latents = torch.ones(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
-            latents = latents * self.shift_factor
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype):
-                latents = self.encode_latents(images) * self.scaling_factor
+                latents = self.encode_latents(images)
             latents.to(dtype=self.autocast_dtype)
+        latents = (latents - self.shift_factor) * self.scaling_factor
 
         noise = torch.randn_like(latents)
         latents = self.scheduler.add_noise(latents, noise, timesteps[0])
@@ -419,4 +419,3 @@ class BaseTrainer:
         text_model, vae, unet, scheduler = load_model(path, sdxl, clip_skip)
         diffusion = DiffusionModel(unet, sdxl=sdxl)
         return cls(config, diffusion, text_model, vae, scheduler, network)
-
