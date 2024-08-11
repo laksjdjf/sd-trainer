@@ -107,4 +107,9 @@ class TextModel(nn.Module):
     def set_embedding_dtype(self, dtype):
         self.text_encoder.text_model.embeddings.to(dtype)
         if self.sdxl:
-            self.text_encoder_2.text_model.embeddings.to(dtype)
+            if hasattr(self.text_encoder_2, 'text_model'):
+                self.text_encoder_2.text_model.embeddings.to(dtype)
+            else:
+                for modules in self.text_encoder_2.modules():
+                    if modules.__class__.__name__ in ["T5LayerNorm", "Embedding"]:
+                        modules.to(dtype)

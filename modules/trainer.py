@@ -120,7 +120,12 @@ class BaseTrainer:
         self.text_model.to(self.te_device, dtype=self.te_dtype)
         if  hasattr(torch, 'float8_e4m3fn') and self.te_dtype== torch.float8_e4m3fn:
             self.text_model.set_embedding_dtype(self.autocast_dtype) # fp8時のエラー回避
-
+            
+        if  hasattr(torch, 'float8_e5m2') and self.te_dtype== torch.float8_e5m2:
+            self.text_model.set_embedding_dtype(self.autocast_dtype) # fp8時のエラー回避
+            for modules in self.diffusion.unet.modules():
+                if modules.__class__.__name__ in ["RMSNorm"]:
+                    modules.to(self.autocast_dtype)
         self.vae.to(self.vae_device, dtype=self.vae_dtype)
 
         self.diffusion.unet.train(config.train_unet)
@@ -222,11 +227,10 @@ class BaseTrainer:
     def loss(self, batch):
         if "latents" in batch:
             latents = batch["latents"].to(self.device)
-            latents = latents * self.scaling_factor
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
                 latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
-                latents = latents * self.scaling_factor
+        latents = (latents - self.shift_factor) * self.scaling_factor
         
         self.batch_size = latents.shape[0] # stepメソッドでも使う
 

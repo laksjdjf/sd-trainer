@@ -23,5 +23,6 @@ class FluxTextModel(TextModel):
 
         tokenizer_2 = T5TokenizerFast.from_pretrained(path, subfolder='tokenizer_2', revision=revision, torch_dtype=torch_dtype)
         text_encoder_2 = T5EncoderModel.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype)
+        tokenizer_2.model_max_length = 128
 
         return cls(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)

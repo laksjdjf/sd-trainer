@@ -47,7 +47,7 @@ class FluxDiffusionModel(nn.Module):
         text_ids = torch.zeros(batch_size, num_prompt_tokens, 3).to(device=device, dtype=dtype)
         return text_ids
     
-    def forward(self, latents, timesteps, encoder_hidden_states, pooled_output, size_condition=None, controlnet_hint=None):
+    def forward(self, latents, timesteps, encoder_hidden_states, pooled_output, size_condition=None, controlnet_hint=None, guidance=1.0):
         batch_size, num_channels_latents, height, width = latents.shape
 
         latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
@@ -56,8 +56,12 @@ class FluxDiffusionModel(nn.Module):
         if timesteps.dim() == 0:
             timesteps = timesteps.repeat(latents.size(0))
         timesteps = timesteps.to(latents) / 1000
-
-        guidance = torch.tensor([0.0]*latents.shape[0]).to(latents)
+        
+        if self.unet.config.guidance_embeds:
+            guidance = torch.tensor([guidance]*latents.shape[0]).to(latents)
+        else:
+            guidance = None
+            
         model_output = self.unet(
             hidden_states=latents,
             timestep=timesteps,
