@@ -41,50 +41,6 @@ class FluxTrainer(BaseTrainer):
                     file_name=lora,
                     mode="merge"
                 )
-                
-    def loss(self, batch):
-        if "latents" in batch:
-            latents = batch["latents"].to(self.device)
-        else:
-            with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
-        latents = (latents - self.shift_factor) * self.scaling_factor
-        
-        self.batch_size = latents.shape[0] # stepメソッドでも使う
-
-        if "encoder_hidden_states" in batch:
-            encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
-            pooled_output = batch["pooled_outputs"].to(self.device)
-        else:
-            with torch.autocast("cuda", dtype=self.autocast_dtype):
-                encoder_hidden_states, pooled_output = self.text_model(batch["captions"])
-
-        if "size_condition" in batch:
-            size_condition = batch["size_condition"].to(self.device)
-        else:
-            size_condition = None
-
-        if "controlnet_hint" in batch:
-            controlnet_hint = batch["controlnet_hint"].to(self.device)
-            if hasattr(self.network, "set_controlnet_hint"):
-                self.network.set_controlnet_hint(controlnet_hint)
-        else:
-            controlnet_hint = None
-
-        timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device)
-        noise = torch.randn_like(latents)
-        if self.config.noise_offset != 0:
-            noise += self.config.noise_offset * torch.randn(noise.shape[0], noise.shape[1], 1, 1).to(noise)
-        noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
-        
-        with torch.autocast("cuda", dtype=self.autocast_dtype):
-            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition, controlnet_hint, guidance=1.0)
-
-        target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
-
-        loss = nn.functional.mse_loss(model_output.float(), target.float(), reduction="mean")
-
-        return loss
     
     @torch.no_grad()
     def sample(

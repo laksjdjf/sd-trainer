@@ -253,6 +253,11 @@ class BaseTrainer:
         else:
             controlnet_hint = None
 
+        if "mask" in batch:
+            mask = batch["mask"].to(self.device, dtype = latents.dtype).repeat(1, latents.shape[1], 1, 1)
+        else:
+            mask = None
+
         timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device)
         noise = torch.randn_like(latents)
         if self.config.noise_offset != 0:
@@ -263,6 +268,10 @@ class BaseTrainer:
             model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition, controlnet_hint)
 
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
+
+        if mask is not None:
+            model_output = model_output * mask
+            target = target * mask
 
         loss = nn.functional.mse_loss(model_output.float(), target.float(), reduction="mean")
 

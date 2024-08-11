@@ -25,6 +25,7 @@ class BaseDataset(Dataset):
         image: Optional[str] = None,
         text_emb: Optional[str] = None,
         control: Optional[str] = None,
+        mask: Optional[str] = None,
         prompt: Optional[str] = None,
         prefix: str = "",
         shuffle: bool = False,
@@ -48,6 +49,7 @@ class BaseDataset(Dataset):
         self.image = image
         self.text_emb = text_emb
         self.control = control
+        self.mask = mask
         self.prompt = prompt  # 全ての画像のcaptionをpromptにする
         self.prefix = prefix  # captionのprefix
         self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
@@ -93,6 +95,9 @@ class BaseDataset(Dataset):
 
         if self.control:
             batch["controlnet_hint"] = self.get_control(samples, self.control if isinstance(self.control, str) else "control")
+
+        if self.mask:
+            batch["mask"] = self.get_masks(samples, self.mask if isinstance(self.mask, str) else "mask")
 
         return batch
 
@@ -195,3 +200,11 @@ class BaseDataset(Dataset):
             images.append(transform(image))
         images_tensor = torch.stack(images).to(memory_format=torch.contiguous_format).float()
         return images_tensor
+
+    def get_masks(self, samples, dir="mask"):
+        masks = torch.stack([
+            torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["arr_0"]).unsqueeze(0)
+            for sample in samples
+        ])
+        masks.to(memory_format=torch.contiguous_format).float()
+        return masks
