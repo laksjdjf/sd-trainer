@@ -77,11 +77,11 @@ class NetworkManager(nn.Module):
             self.unet_modules += self.create_modules(LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_CONV, state_dict, conv_module_args, unet_key_filters, unet_keys)
         if state_dict or text_module_args is not None:
             self.text_encoder_modules = []
-            if text_model.sdxl:
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_1, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te1_keys)
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_2, text_model.text_encoder_2, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te2_keys)
+            if len(text_model.text_encoders) > 1:
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_1, text_model.text_encoders[0], TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te1_keys)
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_2, text_model.text_encoders[1], TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te2_keys)
             else:
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te_keys)
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER, text_model.text_encoders[0], TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te_keys)
         else:
             self.text_encoder_modules = []
 

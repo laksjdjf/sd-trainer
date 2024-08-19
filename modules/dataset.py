@@ -8,14 +8,13 @@ import logging
 import random
 import numpy as np
 from typing import Optional
-from modules.text_model import TextModel
 
 logger = logging.getLogger("データセットちゃん")
 
 class BaseDataset(Dataset):
     def __init__(
         self,
-        text_model: TextModel,
+        text_model,
         batch_size: int,
         path: str,
         metadata: str="buckets.json",
@@ -60,9 +59,9 @@ class BaseDataset(Dataset):
             text_device = self.text_model.device
             self.text_model.to("cuda")
             with torch.no_grad():
-                self.uncond_hidden_state, self.uncond_pooled_output = self.text_model([""])
-            self.uncond_hidden_state.detach().float().cpu()
-            self.uncond_pooled_output.detach().float().cpu()
+                uncond_hidden_state, uncond_pooled_output = self.text_model([""])
+            self.uncond_hidden_state = uncond_hidden_state.detach().float().cpu()
+            self.uncond_pooled_output = uncond_pooled_output.detach().float().cpu()
             self.text_model.to(text_device)
             logger.info(f"空文の埋め込みを計算したよ！")
 
@@ -174,11 +173,6 @@ class BaseDataset(Dataset):
         return torch.stack(size_condition)
     
     def get_text_embeddings(self, samples, dir="text_emb"):
-        if random.random() < self.ucg:
-            encoder_hidden_states = self.uncond_hidden_state.repeat(len(samples), 1, 1)
-            pooled_outputs = self.uncond_pooled_output.repeat(len(samples), 1)
-            return encoder_hidden_states, pooled_outputs
-
         encoder_hidden_states = torch.stack([
             torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["encoder_hidden_state"])
             for sample in samples
@@ -189,6 +183,12 @@ class BaseDataset(Dataset):
             torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["pooled_output"])
             for sample in samples
         ])
+
+        for i in range(len(samples)):
+            if random.random() < self.ucg:
+                pooled_outputs[i] = self.uncond_pooled_output.clone()
+                encoder_hidden_states[i] = self.uncond_hidden_state.clone()
+        
         pooled_outputs.to(memory_format=torch.contiguous_format).float()
         return encoder_hidden_states, pooled_outputs
     

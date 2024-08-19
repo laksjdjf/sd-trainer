@@ -17,7 +17,14 @@ def main(config):
     
     logger.info(f"モデルを{config.main.model_path}からロードしちゃうよ！")
     trainer_cls = get_attr_from_config(config.trainer.module)
-    trainer = trainer_cls.from_pretrained(config.main.model_path, config.main.sdxl, config.main.clip_skip, config.trainer)
+    trainer = trainer_cls.from_pretrained(
+        path = config.main.model_path, 
+        model_type = config.main.model_type,
+        revision = config.main.revision,
+        torch_dtype = get_attr_from_config(config.main.torch_dtype),
+        clip_skip = config.main.clip_skip, 
+        config = config.trainer
+    )
 
     dataset_cls = get_attr_from_config(config.dataset.module)
     dataset = dataset_cls(trainer.text_model, **config.dataset.args)

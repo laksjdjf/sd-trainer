@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
 from torchvision import transforms
-from modules.diffusion_model import DiffusionModel
-from modules.text_model import TextModel
-from modules.scheduler import BaseScheduler
 from modules.utils import get_attr_from_config, load_model
 from networks.manager import NetworkManager
 from tqdm import tqdm
@@ -30,18 +27,32 @@ for directory in DIRECTORIES:
     os.makedirs(directory, exist_ok=True)
 
 class BaseTrainer:
-    def __init__(self, config, diffusion:DiffusionModel, text_model:TextModel, vae:AutoencoderKL, scheduler, network:NetworkManager):
+    def __init__(self, config, model_type, diffusion, text_model, vae:AutoencoderKL, diffusers_scheduler, scheduler, network:NetworkManager):
         self.config = config
         self.diffusion = diffusion
         self.text_model = text_model
         self.vae = vae
         self.network = network
-        self.diffusers_scheduler = scheduler # モデルのセーブ次にのみ利用
-        self.scheduler = BaseScheduler(scheduler.config.prediction_type == "v_prediction")
-        self.sdxl = text_model.sdxl
-        self.scaling_factor = 0.13025 if self.sdxl else 0.18215
-        self.shift_factor = 0
-        self.input_channels = 4
+        self.diffusers_scheduler = diffusers_scheduler
+        self.scheduler = scheduler
+        self.model_type = model_type
+
+        if model_type == "sd1":
+            self.scaling_factor =  0.18215
+            self.shift_factor = 0
+            self.input_channels = 4
+        elif model_type == "sdxl":
+            self.scaling_factor = 0.13025
+            self.shift_factor = 0
+            self.input_channels = 4
+        elif model_type == "sd3":
+            self.scaling_factor = 1.5305
+            self.shift_factor = 0.0609
+            self.input_channels = 16
+        elif model_type == "flux":
+            self.scaling_factor = 0.3611
+            self.shift_factor = 0.1159
+            self.input_channels = 16
 
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
@@ -108,24 +119,23 @@ class BaseTrainer:
         self.autocast_dtype = get_attr_from_config(config.autocast_dtype) or self.weight_dtype
         self.vae_dtype = get_attr_from_config(config.vae_dtype) or self.weight_dtype
         self.te_dtype = self.train_dtype if config.train_text_encoder else self.weight_dtype
+        self.unet_dtype = self.train_dtype if config.train_unet else self.weight_dtype
 
         logger.info(f"学習対象モデルの型は{self.train_dtype}だって。")
         logger.info(f"学習対象以外の型は{self.weight_dtype}だよ！")
         logger.info(f"オートキャストの型は{self.autocast_dtype}にしちゃった。")
 
-        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.autocast_dtype == torch.float16)
+        self.grad_scaler = torch.amp.GradScaler("cuda", enabled=self.autocast_dtype == torch.float16)
 
-        self.diffusion.unet.to(device, dtype=self.train_dtype if config.train_unet else self.weight_dtype)
+        self.diffusion.unet.to(device, dtype=self.unet_dtype)
         
         self.text_model.to(self.te_device, dtype=self.te_dtype)
         if  hasattr(torch, 'float8_e4m3fn') and self.te_dtype== torch.float8_e4m3fn:
-            self.text_model.set_embedding_dtype(self.autocast_dtype) # fp8時のエラー回避
-            
-        if  hasattr(torch, 'float8_e5m2') and self.te_dtype== torch.float8_e5m2:
-            self.text_model.set_embedding_dtype(self.autocast_dtype) # fp8時のエラー回避
-            for modules in self.diffusion.unet.modules():
-                if modules.__class__.__name__ in ["RMSNorm"]:
-                    modules.to(self.autocast_dtype)
+            self.text_model.prepare_fp8(self.autocast_dtype) # fp8時のエラー回避
+        
+        if  hasattr(torch, 'float8_e4m3fn') and self.unet_dtype== torch.float8_e4m3fn:
+            self.diffusion.prepare_fp8(self.autocast_dtype)
+
         self.vae.to(self.vae_device, dtype=self.vae_dtype)
 
         self.diffusion.unet.train(config.train_unet)
@@ -265,7 +275,7 @@ class BaseTrainer:
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
         
         with torch.autocast("cuda", dtype=self.autocast_dtype):
-            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition, controlnet_hint)
+            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, sample=False, size_condition=size_condition, controlnet_hint=controlnet_hint)
 
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
 
@@ -362,7 +372,7 @@ class BaseTrainer:
         for i, t in enumerate(timesteps):
             with torch.autocast("cuda", dtype=self.autocast_dtype):
                 latents_input = torch.cat([latents] * (2 if guidance_scale != 1.0 else 1), dim=0)
-                model_output = self.diffusion(latents_input, t, encoder_hidden_states, pooled_output, controlnet_hint=controlnet_hint)
+                model_output = self.diffusion(latents_input, t, encoder_hidden_states, pooled_output, sample=True, controlnet_hint=controlnet_hint)
 
             if guidance_scale != 1.0:
                 uncond, cond = model_output.chunk(2)
@@ -401,6 +411,8 @@ class BaseTrainer:
         return images
 
     def save_pretrained(self, save_directory):
+        if self.model_type not in ["sd1", "sdxl"]:
+            raise NotImplementedError(f"{self.model_type}は未対応だよ！")
         self.diffusion.unet.save_pretrained(os.path.join(save_directory, "unet"))
         self.vae.save_pretrained(os.path.join(save_directory, "vae"))
         self.text_model.save_pretrained(save_directory)
@@ -412,7 +424,7 @@ class BaseTrainer:
         model_index["text_encoder"] = ["transformers", "CLIPTextModel"]
         model_index["tokenizer"] = ["transformers", "CLIPTokenizer"]
         model_index["scheduler"] = ["diffusers", "DDIMScheduler"]
-        if self.sdxl:
+        if self.model_type == "sdxl":
             model_index["text_encoder_2"] = ["transformers", "CLIPTextModelWithProjection"]
             model_index["tokenizer_2"] = ["transformers", "CLIPTokenizer"]
             model_index["_class_name"] = "StableDiffusionXLPipeline"
@@ -426,9 +438,8 @@ class BaseTrainer:
             json.dump(model_index, f)
     
     @classmethod
-    def from_pretrained(cls, path, sdxl, clip_skip=None, config=None, network=None):
+    def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None):
         if clip_skip is None:
-            clip_skip = -2 if sdxl else -1
-        text_model, vae, unet, scheduler = load_model(path, sdxl, clip_skip)
-        diffusion = DiffusionModel(unet, sdxl=sdxl)
-        return cls(config, diffusion, text_model, vae, scheduler, network)
+            clip_skip = -2 if model_type == "sdxl" else -1
+        text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype)
+        return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network)

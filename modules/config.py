@@ -7,7 +7,9 @@ class MainConfig:
     model_path: str = MISSING
     output_path: str = MISSING
     seed: Optional[int] = 4545
-    sdxl: bool = MISSING
+    model_type: str = "sd1"
+    revision: Optional[str] = None
+    torch_dtype: Optional[str] = None
     clip_skip: Optional[bool] = None
     steps: Optional[int] = None
     epochs: Optional[int] = None
