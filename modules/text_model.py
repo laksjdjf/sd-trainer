@@ -6,6 +6,8 @@ import torch.nn as nn
 class BaseTextModel(nn.Module):
     def __init__(self):
         super().__init__()
+        self.prompt = None
+        self.negative_prompt = None
 
     def tokenize(self, texts):
         tokens = []
@@ -45,6 +47,24 @@ class BaseTextModel(nn.Module):
         for text_encoder in self.text_encoders:
             if hasattr(text_encoder, 'text_model'):
                 text_encoder.text_model.embeddings.to(autocast_dtype)
+    
+    @torch.no_grad()
+    def cache_uncond(self):
+        uncond_hidden_state, uncond_pooled_output = self([""])
+        self.uncond_hidden_state = uncond_hidden_state.detach().float().cpu()
+        self.uncond_pooled_output = uncond_pooled_output.detach().float().cpu()
+    
+    @torch.no_grad()
+    def cache_sample(self, prompt, negative_prompt):
+        encoder_hidden_states, pooled_output = self([prompt])
+        self.encoder_hidden_states = encoder_hidden_states.detach().float().cpu()
+        self.pooled_output = pooled_output.detach().float().cpu()
+        
+        encoder_hidden_states, pooled_output = self([negative_prompt])
+        self.negative_encoder_hidden_states = encoder_hidden_states.detach().float().cpu()
+        self.negative_pooled_output = pooled_output.detach().float().cpu()
+        self.prompt = prompt
+        self.negative_prompt = negative_prompt
 
     @classmethod
     def from_pretrained(cls, path, revision=None, torch_dtype=None):

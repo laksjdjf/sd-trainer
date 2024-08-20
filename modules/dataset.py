@@ -54,17 +54,6 @@ class BaseDataset(Dataset):
         self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
         self.ucg = ucg  # captionをランダムにする空文にする確率
 
-        # 空文の埋め込みを事前に計算しておく
-        if self.ucg > 0.0 and self.text_emb:
-            text_device = self.text_model.device
-            self.text_model.to("cuda")
-            with torch.no_grad():
-                uncond_hidden_state, uncond_pooled_output = self.text_model([""])
-            self.uncond_hidden_state = uncond_hidden_state.detach().float().cpu()
-            self.uncond_pooled_output = uncond_pooled_output.detach().float().cpu()
-            self.text_model.to(text_device)
-            logger.info(f"空文の埋め込みを計算したよ！")
-
         self.init_batch_samples()
         logger.info(f"データセットを作ったよ！")
 
@@ -186,8 +175,8 @@ class BaseDataset(Dataset):
 
         for i in range(len(samples)):
             if random.random() < self.ucg:
-                pooled_outputs[i] = self.uncond_pooled_output.clone()
-                encoder_hidden_states[i] = self.uncond_hidden_state.clone()
+                pooled_outputs[i] = self.text_model.uncond_pooled_output.clone()
+                encoder_hidden_states[i] = self.text_model.uncond_hidden_state.clone()
         
         pooled_outputs.to(memory_format=torch.contiguous_format).float()
         return encoder_hidden_states, pooled_outputs

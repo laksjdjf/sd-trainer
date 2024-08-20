@@ -1,4 +1,5 @@
 import torch
+import math
 
 def substitution_t(constants, timesteps, batch_size): 
     if timesteps.dim() == 0: # 全要素同じtの場合
@@ -87,11 +88,10 @@ def time_to_mult(t, sample):
     ret_t = ret_t.to(sample)
     return ret_t.view(-1, 1, 1, 1)
 
-class SD3Scheduler:
-    def __init__(self, v_prediction=False):
-        self.v_prediction = v_prediction # not used
+class FlowScheduler:
+    def __init__(self, shift=3.0):
         self.num_timesteps = 1000
-        self.shift = 3
+        self.shift = shift
         return
 
     def set_timesteps(self, num_inference_steps, device="cuda"):

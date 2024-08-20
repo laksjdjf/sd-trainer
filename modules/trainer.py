@@ -127,12 +127,19 @@ class BaseTrainer:
 
         self.grad_scaler = torch.amp.GradScaler("cuda", enabled=self.autocast_dtype == torch.float16)
 
-        self.diffusion.unet.to(device, dtype=self.unet_dtype)
         
-        self.text_model.to(self.te_device, dtype=self.te_dtype)
+        self.text_model.to("cuda", dtype=self.te_dtype)
         if  hasattr(torch, 'float8_e4m3fn') and self.te_dtype== torch.float8_e4m3fn:
             self.text_model.prepare_fp8(self.autocast_dtype) # fp8時のエラー回避
+
+        with torch.autocast("cuda", dtype=self.autocast_dtype), torch.no_grad():
+            self.text_model.cache_uncond()
+            self.text_model.cache_sample(config.validation_args.prompt, config.validation_args.negative_prompt)
         
+        self.text_model.to(self.te_device)
+        torch.cuda.empty_cache()
+        
+        self.diffusion.unet.to(device, dtype=self.unet_dtype)
         if  hasattr(torch, 'float8_e4m3fn') and self.unet_dtype== torch.float8_e4m3fn:
             self.diffusion.prepare_fp8(self.autocast_dtype)
 
@@ -193,11 +200,12 @@ class BaseTrainer:
             self.text_model.train()
             logger.info("勾配チェックポイントを有効にしてみたよ！")
 
-    def prepare_network_from_file(self, file_name):
+    def prepare_network_from_file(self, file_name, mode="apply"):
         self.network = NetworkManager(
             text_model=self.text_model,
             unet=self.diffusion.unet,
-            file_name=file_name
+            file_name=file_name,
+            mode=mode
         )
 
     def prepare_optimizer(self):
@@ -313,7 +321,7 @@ class BaseTrainer:
     def sample(
         self, 
         prompt="", 
-        negative_prompt="", 
+        negative_prompt="",
         batch_size=1, 
         height=768, 
         width=768, 
@@ -331,6 +339,21 @@ class BaseTrainer:
         if seed is not None:
             torch.manual_seed(seed)
             torch.cuda.manual_seed(seed)
+
+        if prompt == self.text_model.prompt and negative_prompt == self.text_model.negative_prompt:
+            use_cache = True
+            encoder_hidden_states, pooled_output = self.text_model.encoder_hidden_states, self.text_model.pooled_output
+            negative_encoder_hidden_states, negative_pooled_output = self.text_model.negative_encoder_hidden_states, self.text_model.negative_pooled_output
+            if guidance_scale != 1.0:
+                encoder_hidden_states = torch.cat([negative_encoder_hidden_states.repeat(batch_size, 1, 1), encoder_hidden_states.repeat(batch_size, 1, 1)], dim=0)
+                pooled_output = torch.cat([negative_pooled_output.repeat(batch_size, 1), pooled_output.repeat(batch_size, 1)], dim=0)
+            else:
+                encoder_hidden_states = encoder_hidden_states.repeat(batch_size, 1, 1)
+                pooled_output = pooled_output.repeat(batch_size, 1)
+            encoder_hidden_states = encoder_hidden_states.to(self.device)
+            pooled_output = pooled_output.to(self.device)
+        else:
+            use_cache = False
 
         if guidance_scale != 1.0:
             prompt = [negative_prompt] * batch_size + [prompt] * batch_size
@@ -350,11 +373,11 @@ class BaseTrainer:
 
         noise = torch.randn_like(latents)
         latents = self.scheduler.add_noise(latents, noise, timesteps[0])
-
-        self.text_model.to("cuda")
-        with torch.autocast("cuda", dtype=self.autocast_dtype):
-            encoder_hidden_states, pooled_output = self.text_model(prompt)
-        self.text_model.to(self.te_device)
+        if not use_cache:
+            self.text_model.to("cuda")
+            with torch.autocast("cuda", dtype=self.autocast_dtype):
+                encoder_hidden_states, pooled_output = self.text_model(prompt)
+            self.text_model.to(self.te_device)
 
         if controlnet_hint is not None:
             if isinstance(controlnet_hint, str):

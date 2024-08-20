@@ -2,10 +2,11 @@ import importlib
 import os
 from safetensors.torch import load_file, save_file
 import torch
+import math
 from diffusers import UNet2DConditionModel, AutoencoderKL, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel
 from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel
 from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel
-from modules.scheduler import BaseScheduler, SD3Scheduler
+from modules.scheduler import BaseScheduler, FlowScheduler
 
 # データローダー用の関数
 def collate_fn(x):
@@ -79,7 +80,7 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             unet = SD3Transformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype)
             vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype)
             diffusers_scheduler = None
-        scheduler = SD3Scheduler()
+        scheduler = FlowScheduler()
         diffusion = SD3DiffusionModel(unet)
     elif model_type == "flux":
         if os.path.isfile(path):
@@ -89,7 +90,7 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             unet = FluxTransformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype)
             vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype)
             diffusers_scheduler = None
-        scheduler = SD3Scheduler()
+        scheduler = FlowScheduler(shift=math.exp(1.15))
         diffusion = FluxDiffusionModel(unet)
 
     text_model.clip_skip = clip_skip
