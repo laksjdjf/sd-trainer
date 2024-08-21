@@ -52,17 +52,17 @@ class BaseTextModel(nn.Module):
     def cache_uncond(self):
         uncond_hidden_state, uncond_pooled_output = self([""])
         self.uncond_hidden_state = uncond_hidden_state.detach().float().cpu()
-        self.uncond_pooled_output = uncond_pooled_output.detach().float().cpu()
+        self.uncond_pooled_output = uncond_pooled_output.detach().float().cpu() if uncond_pooled_output is not None else None
     
     @torch.no_grad()
     def cache_sample(self, prompt, negative_prompt):
         encoder_hidden_states, pooled_output = self([prompt])
         self.encoder_hidden_states = encoder_hidden_states.detach().float().cpu()
-        self.pooled_output = pooled_output.detach().float().cpu()
+        self.pooled_output = pooled_output.detach().float().cpu() if pooled_output is not None else None
         
         encoder_hidden_states, pooled_output = self([negative_prompt])
         self.negative_encoder_hidden_states = encoder_hidden_states.detach().float().cpu()
-        self.negative_pooled_output = pooled_output.detach().float().cpu()
+        self.negative_pooled_output = pooled_output.detach().float().cpu() if pooled_output is not None else None
         self.prompt = prompt
         self.negative_prompt = negative_prompt
 

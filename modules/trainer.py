@@ -346,12 +346,15 @@ class BaseTrainer:
             negative_encoder_hidden_states, negative_pooled_output = self.text_model.negative_encoder_hidden_states, self.text_model.negative_pooled_output
             if guidance_scale != 1.0:
                 encoder_hidden_states = torch.cat([negative_encoder_hidden_states.repeat(batch_size, 1, 1), encoder_hidden_states.repeat(batch_size, 1, 1)], dim=0)
-                pooled_output = torch.cat([negative_pooled_output.repeat(batch_size, 1), pooled_output.repeat(batch_size, 1)], dim=0)
+                if pooled_output is not None:
+                    pooled_output = torch.cat([negative_pooled_output.repeat(batch_size, 1), pooled_output.repeat(batch_size, 1)], dim=0)
             else:
                 encoder_hidden_states = encoder_hidden_states.repeat(batch_size, 1, 1)
-                pooled_output = pooled_output.repeat(batch_size, 1)
+                if pooled_output is not None:
+                    pooled_output = pooled_output.repeat(batch_size, 1)
             encoder_hidden_states = encoder_hidden_states.to(self.device)
-            pooled_output = pooled_output.to(self.device)
+            if pooled_output is not None:
+                pooled_output = pooled_output.to(self.device)
         else:
             use_cache = False
 
@@ -427,6 +430,7 @@ class BaseTrainer:
     def sample_validation(self, step):
         logger.info(f"サンプルを生成するよ！")
         images = []
+        torch.cuda.empty_cache()
         for i in range(self.config.validation_num_samples):
             image = self.sample(seed=self.config.validation_seed + i, **self.config.validation_args)[0]
             images.append(image)
