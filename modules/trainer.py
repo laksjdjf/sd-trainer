@@ -339,6 +339,14 @@ class BaseTrainer:
         if seed is not None:
             torch.manual_seed(seed)
             torch.cuda.manual_seed(seed)
+        
+        if prompt.split(".")[-1] == "txt":
+            with open(prompt, "r") as f:
+                prompt = f.read()
+                
+        if negative_prompt.split(".")[-1] == "txt":
+            with open(negative_prompt, "r") as f:
+                negative_prompt = f.read()
 
         if prompt == self.text_model.prompt and negative_prompt == self.text_model.negative_prompt:
             use_cache = True

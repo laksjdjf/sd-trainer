@@ -56,6 +56,15 @@ class BaseTextModel(nn.Module):
     
     @torch.no_grad()
     def cache_sample(self, prompt, negative_prompt):
+
+        if prompt.split(".")[-1] == "txt":
+            with open(prompt, "r") as f:
+                prompt = f.read()
+                
+        if negative_prompt.split(".")[-1] == "txt":
+            with open(negative_prompt, "r") as f:
+                negative_prompt = f.read()
+
         encoder_hidden_states, pooled_output = self([prompt])
         self.encoder_hidden_states = encoder_hidden_states.detach().float().cpu()
         self.pooled_output = pooled_output.detach().float().cpu() if pooled_output is not None else None
