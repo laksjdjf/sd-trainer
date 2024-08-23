@@ -8,14 +8,13 @@ import logging
 import random
 import numpy as np
 from typing import Optional
-from modules.text_model import TextModel
 
 logger = logging.getLogger("データセットちゃん")
 
 class BaseDataset(Dataset):
     def __init__(
         self,
-        text_model: TextModel,
+        text_model,
         batch_size: int,
         path: str,
         metadata: str="buckets.json",
@@ -25,6 +24,7 @@ class BaseDataset(Dataset):
         image: Optional[str] = None,
         text_emb: Optional[str] = None,
         control: Optional[str] = None,
+        mask: Optional[str] = None,
         prompt: Optional[str] = None,
         prefix: str = "",
         shuffle: bool = False,
@@ -48,21 +48,11 @@ class BaseDataset(Dataset):
         self.image = image
         self.text_emb = text_emb
         self.control = control
+        self.mask = mask
         self.prompt = prompt  # 全ての画像のcaptionをpromptにする
         self.prefix = prefix  # captionのprefix
         self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
         self.ucg = ucg  # captionをランダムにする空文にする確率
-
-        # 空文の埋め込みを事前に計算しておく
-        if self.ucg > 0.0 and self.text_emb:
-            text_device = self.text_model.device
-            self.text_model.to("cuda")
-            with torch.no_grad():
-                self.uncond_hidden_state, self.uncond_pooled_output = self.text_model([""])
-            self.uncond_hidden_state.detach().float().cpu()
-            self.uncond_pooled_output.detach().float().cpu()
-            self.text_model.to(text_device)
-            logger.info(f"空文の埋め込みを計算したよ！")
 
         self.init_batch_samples()
         logger.info(f"データセットを作ったよ！")
@@ -93,6 +83,9 @@ class BaseDataset(Dataset):
 
         if self.control:
             batch["controlnet_hint"] = self.get_control(samples, self.control if isinstance(self.control, str) else "control")
+
+        if self.mask:
+            batch["mask"] = self.get_masks(samples, self.mask if isinstance(self.mask, str) else "mask")
 
         return batch
 
@@ -169,11 +162,6 @@ class BaseDataset(Dataset):
         return torch.stack(size_condition)
     
     def get_text_embeddings(self, samples, dir="text_emb"):
-        if random.random() < self.ucg:
-            encoder_hidden_states = self.uncond_hidden_state.repeat(len(samples), 1, 1)
-            pooled_outputs = self.uncond_pooled_output.repeat(len(samples), 1)
-            return encoder_hidden_states, pooled_outputs
-
         encoder_hidden_states = torch.stack([
             torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["encoder_hidden_state"])
             for sample in samples
@@ -184,6 +172,12 @@ class BaseDataset(Dataset):
             torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["pooled_output"])
             for sample in samples
         ])
+
+        for i in range(len(samples)):
+            if random.random() < self.ucg:
+                pooled_outputs[i] = self.text_model.uncond_pooled_output.clone()
+                encoder_hidden_states[i] = self.text_model.uncond_hidden_state.clone()
+        
         pooled_outputs.to(memory_format=torch.contiguous_format).float()
         return encoder_hidden_states, pooled_outputs
     
@@ -195,3 +189,11 @@ class BaseDataset(Dataset):
             images.append(transform(image))
         images_tensor = torch.stack(images).to(memory_format=torch.contiguous_format).float()
         return images_tensor
+
+    def get_masks(self, samples, dir="mask"):
+        masks = torch.stack([
+            torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["arr_0"]).unsqueeze(0)
+            for sample in samples
+        ])
+        masks.to(memory_format=torch.contiguous_format).float()
+        return masks

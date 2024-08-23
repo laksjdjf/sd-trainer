@@ -10,9 +10,11 @@ logger = logging.getLogger("ネットワークちゃん")
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_ATTENTION = ["Transformer2DModel"]
+MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
+LORA_PREFIX_MMDIT = 'lora_transformer'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'
 LORA_PREFIX_TEXT_ENCODER_1 = 'lora_te1'
 LORA_PREFIX_TEXT_ENCODER_2 = 'lora_te2'
@@ -53,7 +55,7 @@ class NetworkManager(nn.Module):
             state_dict = None
             
         keys = [] if state_dict is None else set([key.split(".")[0] for key in state_dict.keys()])
-        unet_keys = [key for key in keys if LORA_PREFIX_UNET in key]
+        unet_keys = [key for key in keys if LORA_PREFIX_UNET in key] + [key for key in keys if LORA_PREFIX_MMDIT in key]
         te_keys = [key for key in keys if LORA_PREFIX_TEXT_ENCODER in key]
         te1_keys = [key for key in keys if LORA_PREFIX_TEXT_ENCODER_1 in key]
         te2_keys = [key for key in keys if LORA_PREFIX_TEXT_ENCODER_2 in key]
@@ -69,15 +71,17 @@ class NetworkManager(nn.Module):
         self.unet_modules = []
         if state_dict or module_args is not None:
             self.unet_modules += self.create_modules(LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_TRANSFORMER, state_dict, module_args, unet_key_filters, unet_keys)
+            self.unet_modules += self.create_modules(LORA_PREFIX_MMDIT, unet, MMDIT_TARGET_REPLACE_MODULE, state_dict, module_args, unet_key_filters, unet_keys)
+            
         if state_dict or conv_module_args is not None:
             self.unet_modules += self.create_modules(LORA_PREFIX_UNET, unet, UNET_TARGET_REPLACE_MODULE_CONV, state_dict, conv_module_args, unet_key_filters, unet_keys)
         if state_dict or text_module_args is not None:
             self.text_encoder_modules = []
-            if text_model.sdxl:
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_1, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te1_keys)
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_2, text_model.text_encoder_2, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te2_keys)
+            if len(text_model.text_encoders) > 1:
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_1, text_model.text_encoders[0], TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te1_keys)
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER_2, text_model.text_encoders[1], TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te2_keys)
             else:
-                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER, text_model.text_encoder, TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te_keys)
+                self.text_encoder_modules += self.create_modules(LORA_PREFIX_TEXT_ENCODER, text_model.text_encoders[0], TEXT_ENCODER_TARGET_REPLACE_MODULE, state_dict, text_module_args, None, te_keys)
         else:
             self.text_encoder_modules = []
 
