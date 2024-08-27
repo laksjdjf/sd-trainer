@@ -1,7 +1,7 @@
 #勘で設定する。torchとかはある前提。普通入れてるやろっていうライブラリ入れない。
-diffusers>=0.26.3
+diffusers>=0.30.0
 accelerate
 wandb
-transformers==4.28.1
+transformers
 omegaconf
 safetensors
