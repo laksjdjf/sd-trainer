@@ -55,7 +55,8 @@ def main(args):
         for file in batch_files:
             with open(os.path.join(args.dataset_dir, file), "r") as f:
                 batch_texts.append(f.read())
-        encoder_hidden_states, pooled_outputs = model(batch_texts)
+        text_output = model(batch_texts)
+        encoder_hidden_states, pooled_outputs = text_output.encoder_hidden_states, text_output.pooled_output
         encoder_hidden_states = encoder_hidden_states.cpu().numpy()
         pooled_outputs = pooled_outputs.cpu().numpy()
         for file, encoder_hidden_state, pooled_output in zip(batch_files, encoder_hidden_states, pooled_outputs):

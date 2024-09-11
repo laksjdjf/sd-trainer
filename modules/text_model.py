@@ -3,6 +3,65 @@ import os
 import torch
 import torch.nn as nn
 
+class BaseTextOutput:
+    def __init__(self, encoder_hidden_states, pooled_output=None, attention_mask=None):
+        self.encoder_hidden_states = encoder_hidden_states
+        self.pooled_output = pooled_output
+        self.attention_mask = attention_mask
+
+    def to(self, device=None, dtype=None):
+        self.encoder_hidden_states = self.encoder_hidden_states.to(device=device, dtype=dtype)
+        if self.pooled_output is not None:
+            self.pooled_output = self.pooled_output.to(device=device, dtype=dtype)
+        if self.attention_mask is not None:
+            self.attention_mask = self.attention_mask.to(device=device)
+        return self
+    
+    def __getitem__(self, key):
+        encoder_hidden_states = self.encoder_hidden_states[key]
+        pooled_output = None if self.pooled_output is None else self.pooled_output[key]
+        attention_mask = None if self.attention_mask is None else self.attention_mask[key]
+
+        return BaseTextOutput(encoder_hidden_states, pooled_output, attention_mask)
+    
+    def __len__(self):
+        return self.encoder_hidden_states.size(0)
+
+    def clone(self):
+        encoder_hidden_states = self.encoder_hidden_states.clone()
+        pooled_output = None if self.pooled_output is None else self.pooled_output.clone()
+        attention_mask = None if self.attention_mask is None else self.attention_mask.clone()
+
+        return BaseTextOutput(encoder_hidden_states, pooled_output, attention_mask)
+    
+    def detach(self):
+        encoder_hidden_states = self.encoder_hidden_states.detach()
+        pooled_output = None if self.pooled_output is None else self.pooled_output.detach()
+        attention_mask = None if self.attention_mask is None else self.attention_mask.detach()
+
+        return BaseTextOutput(encoder_hidden_states, pooled_output, attention_mask)
+    
+    def repeat(self, n):
+        encoder_hidden_states = self.encoder_hidden_states.repeat(n, 1, 1)
+        pooled_output = None if self.pooled_output is None else self.pooled_output.repeat(n, 1).clone()
+        attention_mask = None if self.attention_mask is None else self.attention_mask.repeat(n, 1)
+
+        return BaseTextOutput(encoder_hidden_states, pooled_output, attention_mask)
+    
+    @classmethod
+    def cat(cls, outputs):
+        encoder_hidden_states = torch.cat([output.encoder_hidden_states for output in outputs], dim=0)
+        if outputs[0].pooled_output is None:
+            pooled_output = None
+        else:
+            pooled_output = torch.cat([output.pooled_output for output in outputs], dim=0)
+        if outputs[0].attention_mask is None:
+            attention_mask = None
+        else:
+            attention_mask = torch.cat([output.attention_mask for output in outputs], dim=0)
+        
+        return cls(encoder_hidden_states, pooled_output, attention_mask)
+
 class BaseTextModel(nn.Module):
     def __init__(self):
         super().__init__()
@@ -28,7 +87,7 @@ class BaseTextModel(nn.Module):
     def forward(self, prompts):
         tokens = self.tokenize(prompts)
         encoder_hidden_states, pooled_output = self.get_hidden_states(tokens)
-        return encoder_hidden_states, pooled_output
+        return BaseTextOutput(encoder_hidden_states, pooled_output)
     
     def enable_gradient_checkpointing(self, enable=True):
         for text_encoder in self.text_encoders:
@@ -50,13 +109,11 @@ class BaseTextModel(nn.Module):
     
     @torch.no_grad()
     def cache_uncond(self):
-        uncond_hidden_state, uncond_pooled_output = self([""])
-        self.uncond_hidden_state = uncond_hidden_state.detach().float().cpu()
-        self.uncond_pooled_output = uncond_pooled_output.detach().float().cpu() if uncond_pooled_output is not None else None
+        self.uncond_output = self([""])
+        self.uncond_output = self.uncond_output.detach().to("cpu", torch.float32)
     
     @torch.no_grad()
     def cache_sample(self, prompt, negative_prompt):
-
         if prompt.split(".")[-1] == "txt":
             with open(prompt, "r") as f:
                 prompt = f.read()
@@ -65,13 +122,12 @@ class BaseTextModel(nn.Module):
             with open(negative_prompt, "r") as f:
                 negative_prompt = f.read()
 
-        encoder_hidden_states, pooled_output = self([prompt])
-        self.encoder_hidden_states = encoder_hidden_states.detach().float().cpu()
-        self.pooled_output = pooled_output.detach().float().cpu() if pooled_output is not None else None
+        self.positive_output = self([prompt])
+        self.positive_output.detach().to("cpu", torch.float32)
         
-        encoder_hidden_states, pooled_output = self([negative_prompt])
-        self.negative_encoder_hidden_states = encoder_hidden_states.detach().float().cpu()
-        self.negative_pooled_output = pooled_output.detach().float().cpu() if pooled_output is not None else None
+        self.negative_output = self([negative_prompt])
+        self.negative_output.detach().to("cpu", torch.float32)
+
         self.prompt = prompt
         self.negative_prompt = negative_prompt
 
