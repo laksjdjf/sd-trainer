@@ -175,8 +175,9 @@ class BaseDataset(Dataset):
 
         for i in range(len(samples)):
             if random.random() < self.ucg:
-                pooled_outputs[i] = self.text_model.uncond_pooled_output.clone()
-                encoder_hidden_states[i] = self.text_model.uncond_hidden_state.clone()
+                uncond = self.text_model.uncond_output
+                pooled_outputs[i] = uncond.pooled_output.clone()
+                encoder_hidden_states[i] = uncond.encoder_hidden_states.clone()
         
         pooled_outputs.to(memory_format=torch.contiguous_format).float()
         return encoder_hidden_states, pooled_outputs

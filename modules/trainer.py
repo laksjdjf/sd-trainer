@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torchvision import transforms
+from modules.text_model import BaseTextOutput
 from modules.utils import get_attr_from_config, load_model
 from networks.manager import NetworkManager
 from tqdm import tqdm
@@ -255,9 +256,10 @@ class BaseTrainer:
         if "encoder_hidden_states" in batch:
             encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
             pooled_output = batch["pooled_outputs"].to(self.device)
+            text_output = BaseTextOutput(encoder_hidden_states, pooled_output)
         else:
             with torch.autocast("cuda", dtype=self.autocast_dtype):
-                encoder_hidden_states, pooled_output = self.text_model(batch["captions"])
+                text_output = self.text_model(batch["captions"])
 
         if "size_condition" in batch:
             size_condition = batch["size_condition"].to(self.device)
@@ -283,7 +285,7 @@ class BaseTrainer:
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
         
         with torch.autocast("cuda", dtype=self.autocast_dtype):
-            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, sample=False, size_condition=size_condition, controlnet_hint=controlnet_hint)
+            model_output = self.diffusion(noisy_latents, timesteps, text_output, sample=False, size_condition=size_condition, controlnet_hint=controlnet_hint)
 
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
 
@@ -350,19 +352,13 @@ class BaseTrainer:
 
         if prompt == self.text_model.prompt and negative_prompt == self.text_model.negative_prompt:
             use_cache = True
-            encoder_hidden_states, pooled_output = self.text_model.encoder_hidden_states, self.text_model.pooled_output
-            negative_encoder_hidden_states, negative_pooled_output = self.text_model.negative_encoder_hidden_states, self.text_model.negative_pooled_output
+            positive_output = self.text_model.positive_output.repeat(batch_size)
             if guidance_scale != 1.0:
-                encoder_hidden_states = torch.cat([negative_encoder_hidden_states.repeat(batch_size, 1, 1), encoder_hidden_states.repeat(batch_size, 1, 1)], dim=0)
-                if pooled_output is not None:
-                    pooled_output = torch.cat([negative_pooled_output.repeat(batch_size, 1), pooled_output.repeat(batch_size, 1)], dim=0)
+                negative_output = self.text_model.negative_output.repeat(batch_size)
+                text_output = BaseTextOutput.cat([negative_output, positive_output])
             else:
-                encoder_hidden_states = encoder_hidden_states.repeat(batch_size, 1, 1)
-                if pooled_output is not None:
-                    pooled_output = pooled_output.repeat(batch_size, 1)
-            encoder_hidden_states = encoder_hidden_states.to(self.device)
-            if pooled_output is not None:
-                pooled_output = pooled_output.to(self.device)
+                text_output = positive_output
+            text_output = text_output.to(self.device)
         else:
             use_cache = False
 
@@ -387,7 +383,7 @@ class BaseTrainer:
         if not use_cache:
             self.text_model.to("cuda")
             with torch.autocast("cuda", dtype=self.autocast_dtype):
-                encoder_hidden_states, pooled_output = self.text_model(prompt)
+                text_output = self.text_model(prompt)
             self.text_model.to(self.te_device)
 
         if controlnet_hint is not None:
@@ -406,7 +402,7 @@ class BaseTrainer:
         for i, t in enumerate(timesteps):
             with torch.autocast("cuda", dtype=self.autocast_dtype):
                 latents_input = torch.cat([latents] * (2 if guidance_scale != 1.0 else 1), dim=0)
-                model_output = self.diffusion(latents_input, t, encoder_hidden_states, pooled_output, sample=True, controlnet_hint=controlnet_hint)
+                model_output = self.diffusion(latents_input, t, text_output, sample=True, controlnet_hint=controlnet_hint)
 
             if guidance_scale != 1.0:
                 uncond, cond = model_output.chunk(2)

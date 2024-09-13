@@ -14,13 +14,13 @@ class DiffusionModel(nn.Module):
         self.controlnet = controlnet
         self.sdxl = sdxl
     
-    def forward(self, latents, timesteps, encoder_hidden_states, pooled_output, sample=False, size_condition=None, controlnet_hint=None):
+    def forward(self, latents, timesteps, text_output, sample=False, size_condition=None, controlnet_hint=None):
         if self.sdxl:
             if size_condition is None:
                 h, w = latents.shape[2] * 8, latents.shape[3] * 8
                 size_condition = torch.tensor([h, w, 0, 0, h, w]) # original_h/w. crop_top/left, target_h/w
                 size_condition = size_condition.repeat(latents.shape[0], 1).to(latents)
-            added_cond_kwargs = {"text_embeds": pooled_output, "time_ids": size_condition}
+            added_cond_kwargs = {"text_embeds": text_output.pooled_output, "time_ids": size_condition}
         else:
             added_cond_kwargs = None
 
@@ -29,7 +29,7 @@ class DiffusionModel(nn.Module):
             down_block_additional_residuals, mid_block_additional_residual = self.controlnet(
                 latents,
                 timesteps,
-                encoder_hidden_states=encoder_hidden_states,
+                encoder_hidden_states=text_output.encoder_hidden_states,
                 controlnet_cond=controlnet_hint,
                 added_cond_kwargs=added_cond_kwargs,
                 return_dict=False,
@@ -41,7 +41,7 @@ class DiffusionModel(nn.Module):
         model_output = self.unet(
             latents,
             timesteps,
-            encoder_hidden_states,
+            text_output.encoder_hidden_states,
             added_cond_kwargs=added_cond_kwargs,
             down_block_additional_residuals=down_block_additional_residuals,
             mid_block_additional_residual=mid_block_additional_residual,
@@ -82,13 +82,13 @@ class DiffusionModel(nn.Module):
         pass
 
 class SD3DiffusionModel(DiffusionModel):
-    def forward(self, latents, timesteps, encoder_hidden_states, pooled_output, sample=False, size_condition=None, controlnet_hint=None):
+    def forward(self, latents, timesteps, text_output, sample=False, size_condition=None, controlnet_hint=None):
         if timesteps.dim() == 0:
             timesteps = timesteps.repeat(latents.size(0))
         model_output = self.unet(
             latents,
-            encoder_hidden_states,
-            pooled_output,
+            text_output.encoder_hidden_states,
+            text_output.pooled_output,
             timesteps,
         ).sample
 
@@ -130,12 +130,12 @@ class FluxDiffusionModel(DiffusionModel):
         text_ids = torch.zeros(batch_size, num_prompt_tokens, 3).to(device=device, dtype=dtype)
         return text_ids
     
-    def forward(self, latents, timesteps, encoder_hidden_states, pooled_output, sample=False, size_condition=None, controlnet_hint=None):
+    def forward(self, latents, timesteps, text_output, sample=False, size_condition=None, controlnet_hint=None):
         batch_size, num_channels_latents, height, width = latents.shape
 
         latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
         latent_image_ids = self._prepare_latent_image_ids(batch_size, height, width, latents.device, latents.dtype)
-        text_ids = self._prepare_text_ids(batch_size, encoder_hidden_states.shape[1], latents.device, latents.dtype)
+        text_ids = self._prepare_text_ids(batch_size, text_output.encoder_hidden_states.shape[1], latents.device, latents.dtype)
         if timesteps.dim() == 0:
             timesteps = timesteps.repeat(latents.size(0))
         timesteps = timesteps.to(latents) / 1000
@@ -150,8 +150,8 @@ class FluxDiffusionModel(DiffusionModel):
             hidden_states=latents,
             timestep=timesteps,
             guidance=guidance,
-            pooled_projections=pooled_output,
-            encoder_hidden_states=encoder_hidden_states,
+            pooled_projections=text_output.pooled_output,
+            encoder_hidden_states=text_output.encoder_hidden_states,
             txt_ids=text_ids,
             img_ids=latent_image_ids,
             return_dict=False,
