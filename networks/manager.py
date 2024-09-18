@@ -10,7 +10,7 @@ logger = logging.getLogger("ネットワークちゃん")
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_ATTENTION = ["Transformer2DModel"]
-MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock"]
+MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock", "AuraFlowJointTransformerBlock", "AuraFlowSingleTransformerBlock"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
