@@ -162,7 +162,7 @@ class SD1TextModel(BaseTextModel):
     
     @classmethod
     def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None, variant=None):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
         text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
         return cls(tokenizer, text_encoder, clip_skip=clip_skip)
     
@@ -204,9 +204,9 @@ class SDXLTextModel(BaseTextModel):
     
     @classmethod
     def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None, variant=None):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
         text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
-        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision, torch_dtype=torch_dtype)
+        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision)
         text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype, variant=variant)
         return cls(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)
 
@@ -256,9 +256,9 @@ class SD3TextModel(BaseTextModel):
 
     @classmethod
     def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None, variant=None):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
         text_encoder = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
-        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision, torch_dtype=torch_dtype)
+        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision)
         text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype, variant=variant)
         return cls(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)
     
@@ -284,10 +284,10 @@ class FluxTextModel(BaseTextModel):
     
     @classmethod
     def from_pretrained(cls, path, clip_skip=-2, revision=None, torch_dtype=None, variant=None, max_length=128):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
         text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
 
-        tokenizer_2 = T5TokenizerFast.from_pretrained(path, subfolder='tokenizer_2', revision=revision, torch_dtype=torch_dtype)
+        tokenizer_2 = T5TokenizerFast.from_pretrained(path, subfolder='tokenizer_2', revision=revision)
         text_encoder_2 = T5EncoderModel.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype, variant=variant)
         tokenizer_2.model_max_length = max_length
 
@@ -347,7 +347,7 @@ class AuraFlowTextModel(BaseTextModel):
     
     @classmethod
     def from_pretrained(cls, path, clip_skip=-2, revision=None, torch_dtype=None, variant=None, max_length=128):
-        tokenizer = LlamaTokenizerFast.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
+        tokenizer = LlamaTokenizerFast.from_pretrained(path, subfolder='tokenizer', revision=revision)
         text_encoder = UMT5EncoderModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
         tokenizer.model_max_length = max_length
 
