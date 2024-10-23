@@ -7,6 +7,7 @@ from modules.config import Config
 from tqdm import tqdm
 import logging
 import wandb
+from rich.logging import RichHandler
 
 logger = logging.getLogger("メインちゃん")
 
@@ -21,6 +22,7 @@ def main(config):
         path = config.main.model_path, 
         model_type = config.main.model_type,
         revision = config.main.revision,
+        variant = config.main.variant,
         torch_dtype = get_attr_from_config(config.main.torch_dtype),
         clip_skip = config.main.clip_skip, 
         config = config.trainer
@@ -91,6 +93,6 @@ def main(config):
 if __name__ == "__main__":
     config = OmegaConf.load(sys.argv[1])
     config = OmegaConf.merge(OmegaConf.structured(Config), config)
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, format="%(message)s", datefmt="[%X]", handlers=[RichHandler(markup=True,rich_tracebacks=True)])
     print(OmegaConf.to_yaml(config))
     main(config)

@@ -1,4 +1,4 @@
-from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjection, T5EncoderModel, T5TokenizerFast
+from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjection, T5EncoderModel, T5TokenizerFast, LlamaTokenizerFast, UMT5EncoderModel
 import os
 import torch
 import torch.nn as nn
@@ -161,9 +161,9 @@ class SD1TextModel(BaseTextModel):
         return encoder_hidden_states, None
     
     @classmethod
-    def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
-        text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype)
+    def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None, variant=None):
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
+        text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
         return cls(tokenizer, text_encoder, clip_skip=clip_skip)
     
 class SDXLTextModel(BaseTextModel):
@@ -203,11 +203,11 @@ class SDXLTextModel(BaseTextModel):
         return encoder_hidden_states, pooled_output
     
     @classmethod
-    def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
-        text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype)
-        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision, torch_dtype=torch_dtype)
-        text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype)
+    def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None, variant=None):
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
+        text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision)
+        text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype, variant=variant)
         return cls(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)
 
 class SD3TextModel(BaseTextModel):
@@ -215,13 +215,15 @@ class SD3TextModel(BaseTextModel):
         self, 
         tokenizer:CLIPTokenizer, 
         tokenizer_2:CLIPTokenizer, 
+        tokenizer_3:T5TokenizerFast,
         text_encoder:CLIPTextModelWithProjection, 
-        text_encoder_2:CLIPTextModelWithProjection, 
+        text_encoder_2:CLIPTextModelWithProjection,
+        text_encoder_3:T5EncoderModel, 
         clip_skip:int=-1
     ):
         super().__init__()
-        self.tokenizers = [tokenizer, tokenizer_2]
-        self.text_encoders = nn.ModuleList([text_encoder, text_encoder_2])
+        self.tokenizers = [tokenizer, tokenizer_2, tokenizer_3]
+        self.text_encoders = nn.ModuleList([text_encoder, text_encoder_2, text_encoder_3])
         self.clip_skip = clip_skip
 
     def get_hidden_states(self, tokens):
@@ -243,24 +245,52 @@ class SD3TextModel(BaseTextModel):
 
         encoder_hidden_states_2 = encoder_output_2.hidden_states[self.clip_skip]
 
+        encoder_hidden_states_3 = self.text_encoders[2](tokens[2], output_hidden_states=False)[0]
+
         # (b, n, 768) + (b, n, 1280) -> (b, n, 2048)
         encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=2)
 
         # pad
         encoder_hidden_states = torch.cat([encoder_hidden_states, torch.zeros_like(encoder_hidden_states)], dim=2)
-        encoder_hidden_states = torch.cat([encoder_hidden_states, torch.zeros_like(encoder_hidden_states)], dim=1) # t5
+        encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_3], dim=1) # t5
 
         pooled_output = torch.cat([pooled_output, pooled_output_2], dim=1)
 
         return encoder_hidden_states, pooled_output
 
     @classmethod
-    def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
-        text_encoder = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype)
-        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision, torch_dtype=torch_dtype)
-        text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype)
-        return cls(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)
+    def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None, variant=None, max_length=128):
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
+        text_encoder = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision)
+        text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer_3 = T5TokenizerFast.from_pretrained(path, subfolder='tokenizer_3', revision=revision)
+        text_encoder_3 = T5EncoderModel.from_pretrained(path, subfolder='text_encoder_3', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer_3.model_max_length = max_length
+
+        return cls(tokenizer, tokenizer_2, tokenizer_3, text_encoder, text_encoder_2, text_encoder_3, clip_skip=clip_skip)
+
+    def prepare_fp8(self, autocast_dtype):
+        for text_encoder in self.text_encoders:
+            if hasattr(text_encoder, 'text_model'):
+                text_encoder.text_model.embeddings.to(autocast_dtype)
+
+        def forward_hook(modules):
+            def forward(hidden_states):
+                hidden_gelu = modules.act(modules.wi_0(hidden_states))
+                hidden_linear = modules.wi_1(hidden_states)
+                hidden_states = hidden_gelu * hidden_linear
+                hidden_states = modules.dropout(hidden_states)
+
+                hidden_states = modules.wo(hidden_states)
+                return hidden_states
+            return forward
+
+        for modules in self.text_encoders[2].modules():
+            if modules.__class__.__name__ in ["T5LayerNorm", "Embedding"]:
+                modules.to(autocast_dtype)
+            if modules.__class__.__name__ in ["T5DenseGatedActDense"]:
+                modules.forward = forward_hook(modules) 
     
 class FluxTextModel(BaseTextModel):
     def __init__(
@@ -283,12 +313,12 @@ class FluxTextModel(BaseTextModel):
         return encoder_hidden_states, pooled_output
     
     @classmethod
-    def from_pretrained(cls, path, clip_skip=-2, revision=None, torch_dtype=None, max_length=128):
-        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision, torch_dtype=torch_dtype)
-        text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype)
+    def from_pretrained(cls, path, clip_skip=-2, revision=None, torch_dtype=None, variant=None, max_length=128):
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
+        text_encoder = CLIPTextModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
 
-        tokenizer_2 = T5TokenizerFast.from_pretrained(path, subfolder='tokenizer_2', revision=revision, torch_dtype=torch_dtype)
-        text_encoder_2 = T5EncoderModel.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype)
+        tokenizer_2 = T5TokenizerFast.from_pretrained(path, subfolder='tokenizer_2', revision=revision)
+        text_encoder_2 = T5EncoderModel.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype, variant=variant)
         tokenizer_2.model_max_length = max_length
 
         return cls(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)
@@ -313,4 +343,42 @@ class FluxTextModel(BaseTextModel):
             if modules.__class__.__name__ in ["T5LayerNorm", "Embedding"]:
                 modules.to(autocast_dtype)
             if modules.__class__.__name__ in ["T5DenseGatedActDense"]:
-                modules.forward = forward_hook(modules)      
+                modules.forward = forward_hook(modules) 
+
+class AuraFlowTextModel(BaseTextModel):
+    def __init__(
+        self, 
+        tokenizer:LlamaTokenizerFast, 
+        text_encoder:UMT5EncoderModel,
+        clip_skip:int=-1
+    ):
+        super().__init__()
+        self.tokenizers = [tokenizer]
+        self.text_encoders = nn.ModuleList([text_encoder])
+        self.clip_skip = clip_skip
+    
+    def tokenize(self, texts):
+        text_inputs = self.tokenizers[0](
+            texts, 
+            max_length=self.tokenizers[0].model_max_length, 
+            padding="max_length",
+            truncation=True,
+            return_tensors='pt'
+        )
+
+        text_inputs = {k: v.to(self.text_encoders[0].device) for k, v in text_inputs.items()}
+        return [text_inputs]
+
+    def get_hidden_states(self, tokens):
+        encoder_hidden_states = self.text_encoders[0](**tokens[0])[0]
+        attention_mask = tokens[0]["attention_mask"].unsqueeze(-1).expand(encoder_hidden_states.shape)
+        encoder_hidden_states = encoder_hidden_states * attention_mask
+        return encoder_hidden_states, None
+    
+    @classmethod
+    def from_pretrained(cls, path, clip_skip=-2, revision=None, torch_dtype=None, variant=None, max_length=128):
+        tokenizer = LlamaTokenizerFast.from_pretrained(path, subfolder='tokenizer', revision=revision)
+        text_encoder = UMT5EncoderModel.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer.model_max_length = max_length
+
+        return cls(tokenizer, text_encoder, clip_skip=clip_skip)

@@ -42,7 +42,7 @@ class BaseTrainer:
             self.scaling_factor =  0.18215
             self.shift_factor = 0
             self.input_channels = 4
-        elif model_type == "sdxl":
+        elif model_type in ["sdxl", "auraflow"]:
             self.scaling_factor = 0.13025
             self.shift_factor = 0
             self.input_channels = 4
@@ -469,8 +469,8 @@ class BaseTrainer:
             json.dump(model_index, f)
     
     @classmethod
-    def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None):
+    def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None):
         if clip_skip is None:
             clip_skip = -2 if model_type == "sdxl" else -1
-        text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype)
+        text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant)
         return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network)

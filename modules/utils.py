@@ -3,9 +3,9 @@ import os
 from safetensors.torch import load_file, save_file
 import torch
 import math
-from diffusers import UNet2DConditionModel, AutoencoderKL, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel
-from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel
-from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel
+from diffusers import UNet2DConditionModel, AutoencoderKL, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel
+from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel
+from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel
 from modules.scheduler import BaseScheduler, FlowScheduler
 
 # データローダー用の関数
@@ -35,7 +35,7 @@ def get_attr_from_config(config_text: str):
     return getattr(importlib.import_module(module), attr)
 
 
-def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=None):
+def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=None, variant=None):
     if model_type == "sdxl":
         if os.path.isfile(path):
             pipe = StableDiffusionXLPipeline.from_single_file(path, scheduler_type="ddim")
@@ -49,9 +49,9 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             text_model = SDXLTextModel(tokenizer, tokenizer_2, text_encoder, text_encoder_2, clip_skip=clip_skip)
             del pipe
         else:
-            text_model = SDXLTextModel.from_pretrained(path, clip_skip=clip_skip, revision=revision, torch_dtype=torch_dtype)
-            unet = UNet2DConditionModel.from_pretrained(path, subfolder='unet', revision=revision, torch_dtype=torch_dtype)
-            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype)
+            text_model = SDXLTextModel.from_pretrained(path, clip_skip=clip_skip, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = UNet2DConditionModel.from_pretrained(path, subfolder='unet', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
             diffusers_scheduler = DDPMScheduler.from_pretrained(path, subfolder='scheduler', revision=revision)
         diffusion = DiffusionModel(unet, sdxl=True)
         scheduler = BaseScheduler(diffusers_scheduler.config.prediction_type == "v_prediction")
@@ -66,9 +66,9 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             text_model = SD1TextModel(tokenizer, text_encoder, clip_skip=clip_skip)
             del pipe
         else:
-            text_model = SD1TextModel.from_pretrained(path, clip_skip=clip_skip, revision=revision, torch_dtype=torch_dtype)
-            unet = UNet2DConditionModel.from_pretrained(path, subfolder='unet', revision=revision, torch_dtype=torch_dtype)
-            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype)
+            text_model = SD1TextModel.from_pretrained(path, clip_skip=clip_skip, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = UNet2DConditionModel.from_pretrained(path, subfolder='unet', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
             diffusers_scheduler = DDPMScheduler.from_pretrained(path, subfolder='scheduler', revision=revision)
         scheduler = BaseScheduler(diffusers_scheduler.config.prediction_type == "v_prediction")
         diffusion = DiffusionModel(unet)
@@ -76,9 +76,9 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
         if os.path.isfile(path):
             NotImplementedError("from_single_file is not implemented for SD3")
         else:
-            text_model = SD3TextModel.from_pretrained(path, clip_skip=clip_skip, revision=revision, torch_dtype=torch_dtype)
-            unet = SD3Transformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype)
-            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype)
+            text_model = SD3TextModel.from_pretrained(path, clip_skip=clip_skip, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = SD3Transformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
             diffusers_scheduler = None
         scheduler = FlowScheduler()
         diffusion = SD3DiffusionModel(unet)
@@ -86,12 +86,22 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
         if os.path.isfile(path):
             NotImplementedError("from_single_file is not implemented for Flux")
         else:
-            text_model = FluxTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype)
-            unet = FluxTransformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype)
-            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype)
+            text_model = FluxTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = FluxTransformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
             diffusers_scheduler = None
         scheduler = FlowScheduler(shift=math.exp(1.15))
         diffusion = FluxDiffusionModel(unet)
+    elif model_type == "auraflow":
+        if os.path.isfile(path):
+            NotImplementedError("from_single_file is not implemented for AuraFlow")
+        else:
+            text_model = AuraFlowTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = AuraFlowTransformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            diffusers_scheduler = None
+        scheduler = FlowScheduler(shift=1.73)
+        diffusion = AuraFlowDiffusionModel(unet)
 
     text_model.clip_skip = clip_skip
     return text_model, vae, diffusion, diffusers_scheduler, scheduler

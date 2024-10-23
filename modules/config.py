@@ -10,6 +10,7 @@ class MainConfig:
     model_type: str = "sd1"
     revision: Optional[str] = None
     torch_dtype: Optional[str] = None
+    variant: Optional[str] = None
     clip_skip: Optional[bool] = None
     steps: Optional[int] = None
     epochs: Optional[int] = None
