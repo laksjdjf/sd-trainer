@@ -93,6 +93,12 @@ class SD3DiffusionModel(DiffusionModel):
         ).sample
 
         return model_output
+    
+    def prepare_fp8(self, autocast_dtype):
+        for modules in self.unet.modules():
+            if modules.__class__.__name__ in ["PatchEmbed", "RMSNorm"]:
+                modules.to(autocast_dtype)
+
 
 class FluxDiffusionModel(DiffusionModel):
     def _pack_latents(self, latents, batch_size, num_channels_latents, height, width):

@@ -269,6 +269,28 @@ class SD3TextModel(BaseTextModel):
         tokenizer_3.model_max_length = max_length
 
         return cls(tokenizer, tokenizer_2, tokenizer_3, text_encoder, text_encoder_2, text_encoder_3, clip_skip=clip_skip)
+
+    def prepare_fp8(self, autocast_dtype):
+        for text_encoder in self.text_encoders:
+            if hasattr(text_encoder, 'text_model'):
+                text_encoder.text_model.embeddings.to(autocast_dtype)
+
+        def forward_hook(modules):
+            def forward(hidden_states):
+                hidden_gelu = modules.act(modules.wi_0(hidden_states))
+                hidden_linear = modules.wi_1(hidden_states)
+                hidden_states = hidden_gelu * hidden_linear
+                hidden_states = modules.dropout(hidden_states)
+
+                hidden_states = modules.wo(hidden_states)
+                return hidden_states
+            return forward
+
+        for modules in self.text_encoders[2].modules():
+            if modules.__class__.__name__ in ["T5LayerNorm", "Embedding"]:
+                modules.to(autocast_dtype)
+            if modules.__class__.__name__ in ["T5DenseGatedActDense"]:
+                modules.forward = forward_hook(modules) 
     
 class FluxTextModel(BaseTextModel):
     def __init__(
