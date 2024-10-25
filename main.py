@@ -23,6 +23,7 @@ def main(config):
         model_type = config.main.model_type,
         revision = config.main.revision,
         variant = config.main.variant,
+        nf4 = config.main.nf4,
         torch_dtype = get_attr_from_config(config.main.torch_dtype),
         clip_skip = config.main.clip_skip, 
         config = config.trainer

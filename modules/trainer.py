@@ -28,7 +28,7 @@ for directory in DIRECTORIES:
     os.makedirs(directory, exist_ok=True)
 
 class BaseTrainer:
-    def __init__(self, config, model_type, diffusion, text_model, vae:AutoencoderKL, diffusers_scheduler, scheduler, network:NetworkManager):
+    def __init__(self, config, model_type, diffusion, text_model, vae:AutoencoderKL, diffusers_scheduler, scheduler, network:NetworkManager, nf4=False):
         self.config = config
         self.diffusion = diffusion
         self.text_model = text_model
@@ -37,6 +37,7 @@ class BaseTrainer:
         self.diffusers_scheduler = diffusers_scheduler
         self.scheduler = scheduler
         self.model_type = model_type
+        self.nf4 = nf4
 
         if model_type == "sd1":
             self.scaling_factor =  0.18215
@@ -140,8 +141,9 @@ class BaseTrainer:
         self.text_model.to(self.te_device)
         torch.cuda.empty_cache()
         
-        self.diffusion.unet.to(device, dtype=self.unet_dtype)
-        if  hasattr(torch, 'float8_e4m3fn') and self.unet_dtype== torch.float8_e4m3fn:
+        if not self.nf4:
+            self.diffusion.unet.to(device, dtype=self.unet_dtype)
+        if hasattr(torch, 'float8_e4m3fn') and self.unet_dtype== torch.float8_e4m3fn:
             self.diffusion.prepare_fp8(self.autocast_dtype)
 
         self.vae.to(self.vae_device, dtype=self.vae_dtype)
@@ -469,8 +471,8 @@ class BaseTrainer:
             json.dump(model_index, f)
     
     @classmethod
-    def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None):
+    def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None, nf4=False):
         if clip_skip is None:
             clip_skip = -2 if model_type == "sdxl" else -1
-        text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant)
-        return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network)
+        text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant, nf4)
+        return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4)
