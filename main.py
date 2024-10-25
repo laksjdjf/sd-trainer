@@ -24,6 +24,7 @@ def main(config):
         revision = config.main.revision,
         variant = config.main.variant,
         nf4 = config.main.nf4,
+        taesd = config.main.taesd,
         torch_dtype = get_attr_from_config(config.main.torch_dtype),
         clip_skip = config.main.clip_skip, 
         config = config.trainer

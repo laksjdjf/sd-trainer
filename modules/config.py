@@ -12,6 +12,7 @@ class MainConfig:
     torch_dtype: Optional[str] = None
     variant: Optional[str] = None
     nf4: Optional[bool] = False
+    taesd: Optional[bool] = False
     clip_skip: Optional[bool] = None
     steps: Optional[int] = None
     epochs: Optional[int] = None
