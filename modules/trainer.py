@@ -28,7 +28,7 @@ for directory in DIRECTORIES:
     os.makedirs(directory, exist_ok=True)
 
 class BaseTrainer:
-    def __init__(self, config, model_type, diffusion, text_model, vae:AutoencoderKL, diffusers_scheduler, scheduler, network:NetworkManager):
+    def __init__(self, config, model_type, diffusion, text_model, vae:AutoencoderKL, diffusers_scheduler, scheduler, network:NetworkManager, nf4=False, taesd=False):
         self.config = config
         self.diffusion = diffusion
         self.text_model = text_model
@@ -37,6 +37,8 @@ class BaseTrainer:
         self.diffusers_scheduler = diffusers_scheduler
         self.scheduler = scheduler
         self.model_type = model_type
+        self.nf4 = nf4
+        self.taesd = taesd
 
         if model_type == "sd1":
             self.scaling_factor =  0.18215
@@ -140,8 +142,9 @@ class BaseTrainer:
         self.text_model.to(self.te_device)
         torch.cuda.empty_cache()
         
-        self.diffusion.unet.to(device, dtype=self.unet_dtype)
-        if  hasattr(torch, 'float8_e4m3fn') and self.unet_dtype== torch.float8_e4m3fn:
+        if not self.nf4:
+            self.diffusion.unet.to(device, dtype=self.unet_dtype)
+        if hasattr(torch, 'float8_e4m3fn') and self.unet_dtype== torch.float8_e4m3fn:
             self.diffusion.prepare_fp8(self.autocast_dtype)
 
         self.vae.to(self.vae_device, dtype=self.vae_dtype)
@@ -376,6 +379,7 @@ class BaseTrainer:
             with torch.autocast("cuda", dtype=self.vae_dtype):
                 latents = self.encode_latents(images)
             latents.to(dtype=self.autocast_dtype)
+        
         latents = (latents - self.shift_factor) * self.scaling_factor
 
         noise = torch.randn_like(latents)
@@ -415,7 +419,9 @@ class BaseTrainer:
             progress_bar.update(1)
 
         with torch.autocast("cuda", dtype=self.vae_dtype):
-            images = self.decode_latents(latents / self.scaling_factor + self.shift_factor)
+            if not self.taesd:
+                latents = latents / self.scaling_factor + self.shift_factor
+            images = self.decode_latents(latents)
         
         torch.set_rng_state(rng_state)
         torch.cuda.set_rng_state(cuda_rng_state)
@@ -469,8 +475,8 @@ class BaseTrainer:
             json.dump(model_index, f)
     
     @classmethod
-    def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None):
+    def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None, nf4=False, taesd=False):
         if clip_skip is None:
             clip_skip = -2 if model_type == "sdxl" else -1
-        text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant)
-        return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network)
+        text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant, nf4, taesd)
+        return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4, taesd)
