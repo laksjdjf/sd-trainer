@@ -34,8 +34,10 @@ class BaseScheduler:
         timesteps = torch.linspace(0, self.num_timesteps-1, num_inference_steps+1, dtype=float).round()
         return timesteps.flip(0)[:-1].clone().long().to(device) # [999, ... , 0][:-1]
     
-    def sample_timesteps(self, batch_size, device="cuda"):
-        timesteps = torch.randint(0, self.num_timesteps, (batch_size,), device=device)
+    def sample_timesteps(self, batch_size, device="cuda", min_t=0, max_t=None):
+        min_t = int(min_t * self.num_timesteps)
+        max_t = int(max_t * self.num_timesteps) if max_t is not None else self.num_timesteps
+        timesteps = torch.randint(min_t, max_t, (batch_size,), device=device)
         return timesteps
     
     def pred_original_sample(self, sample, model_output, t):
@@ -102,7 +104,9 @@ class FlowScheduler:
         timesteps *= 1000
         return timesteps.to(device)
     
-    def sample_timesteps(self, batch_size, device="cuda"):
+    def sample_timesteps(self, batch_size, device="cuda", min_t=0, max_t=None):
+        if min_t != 0 or max_t is not None:
+            raise ValueError("min_t and max_t are not supported in FlowScheduler")
         logits_norm = torch.randn(batch_size, device=device)
         timesteps = logits_norm.sigmoid()
         timesteps = (timesteps * self.shift) / (1 + (self.shift - 1) * timesteps)

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from modules.trainer import BaseTrainer
+from modules.text_model import BaseTextOutput
 from modules.scheduler import BaseScheduler, substitution_t
 
 # additional config
@@ -38,8 +39,8 @@ class LCMScheduler(BaseScheduler):
         
 
 class LCMTrainer(BaseTrainer):
-    def __init__(self, config, diffusion, text_model, vae, scheduler, network):
-        super().__init__(config, diffusion, text_model, vae, scheduler, network)
+    def __init__(self, config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4=False, taesd=False):
+        super().__init__(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4, taesd)
         self.scheduler = LCMScheduler(self.scheduler.v_prediction) # overwrite
         self.tcd = config.additional_conf.lcm.get("tcd", False)
         gamma = 0.3 if self.tcd else 0.0
@@ -49,24 +50,26 @@ class LCMTrainer(BaseTrainer):
         super().prepare_modules_for_training(device)
 
         self.text_model.to(device)
-        self.negative_encoder_hidden_states, self.negative_pooled_output = self.text_model([self.config.additional_conf.lcm.negative_prompt])
+        self.negative_text_output = self.text_model([self.config.additional_conf.lcm.negative_prompt])
         self.text_model.to(self.te_device)
 
     def loss(self, batch):
         if "latents" in batch:
-            latents = batch["latents"].to(self.device) * self.vae.scaling_factor
+            latents = batch["latents"].to(self.device)
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample() * self.vae.scaling_factor
+                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
+        latents = (latents - self.shift_factor) * self.scaling_factor
         
         self.batch_size = latents.shape[0] # stepメソッドでも使う
 
         if "encoder_hidden_states" in batch:
             encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
             pooled_output = batch["pooled_outputs"].to(self.device)
+            text_output = BaseTextOutput(encoder_hidden_states, pooled_output)
         else:
             with torch.autocast("cuda", dtype=self.autocast_dtype):
-                encoder_hidden_states, pooled_output = self.text_model(batch["captions"])
+                text_output = self.text_model(batch["captions"])
 
         if "size_condition" in batch:
             size_condition = batch["size_condition"].to(self.device)
@@ -87,23 +90,22 @@ class LCMTrainer(BaseTrainer):
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
         
         with torch.autocast("cuda", dtype=self.autocast_dtype):
-            model_output = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition)
+            model_output = self.diffusion(noisy_latents, timesteps, text_output, size_condition=size_condition)
             pred_original_sample = self.scheduler.pred_original_sample(noisy_latents, model_output, timesteps)
             pred = self.scheduler.step(noisy_latents, model_output, timesteps, inner_timesteps, use_ddim=True) if self.tcd else pred_original_sample
             with torch.no_grad():
                 # one step ddim
-                negative_encoder_hidden_states = self.negative_encoder_hidden_states.repeat(self.batch_size, 1, 1)
-                negative_pooled_output = self.negative_pooled_output.repeat(self.batch_size, 1)
+                negative_text_output = self.negative_text_output.repeat(self.batch_size)
                 
                 with self.network.set_temporary_multiplier(0.0):
-                    uncond = self.diffusion(noisy_latents, timesteps, negative_encoder_hidden_states, negative_pooled_output, size_condition)
-                    cond = self.diffusion(noisy_latents, timesteps, encoder_hidden_states, pooled_output, size_condition)
+                    uncond = self.diffusion(noisy_latents, timesteps, negative_text_output, size_condition=size_condition)
+                    cond = self.diffusion(noisy_latents, timesteps, text_output, size_condition=size_condition)
                     cfg_model_output = uncond + self.config.additional_conf.lcm.guidance_scale * (cond - uncond)
 
                 prev_noisy_latents = self.scheduler.step(noisy_latents, cfg_model_output, timesteps, prev_timesteps, use_ddim=True)
 
                 # target
-                target_model_output = self.diffusion(prev_noisy_latents, prev_timesteps, encoder_hidden_states, pooled_output, size_condition)
+                target_model_output = self.diffusion(prev_noisy_latents, prev_timesteps, text_output, size_condition=size_condition)
                 if self.tcd:
                     target = self.scheduler.step(prev_noisy_latents, target_model_output, prev_timesteps, inner_timesteps, use_ddim=True)
                 else:
