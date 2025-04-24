@@ -66,13 +66,20 @@ class BaseTrainer:
                     mode="merge"
                 )
 
+        if config is not None and config.step_range is not None:
+            self.min_t, self.max_t = map(float, config.step_range.split(","))
+        else:
+            self.min_t, self.max_t = 0.0, None
+            
+
     @torch.no_grad()
     def decode_latents(self, latents):
         self.vae.to("cuda")
         images = []
-
+        
         for i in range(latents.shape[0]):
-            image = self.vae.decode(latents[i].unsqueeze(0)).sample
+            latent = latents[i].unsqueeze(0).to(self.vae_dtype)
+            image = self.vae.decode(latent).sample
             images.append(image)
         images = torch.cat(images, dim=0)
         images = (images / 2 + 0.5).clamp(0, 1)
@@ -91,8 +98,11 @@ class BaseTrainer:
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
-        images = torch.stack([to_tensor_norm(image) for image in images]).to(self.vae.device)
-        latents = self.vae.encode(images).latent_dist.sample()
+        images = torch.stack([to_tensor_norm(image) for image in images]).to(self.vae.device, dtype=self.vae_dtype)
+        if not self.taesd:
+            latents = self.vae.encode(images).latent_dist.sample()
+        else:
+            latents = self.vae.encode(images).latents
         self.vae.to(self.vae.device)
         return latents
     
@@ -281,7 +291,7 @@ class BaseTrainer:
         else:
             mask = None
 
-        timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device)
+        timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device, self.min_t, self.max_t)
         noise = torch.randn_like(latents)
         if self.config.noise_offset != 0:
             noise += self.config.noise_offset * torch.randn(noise.shape[0], noise.shape[1], 1, 1).to(noise)
@@ -336,10 +346,12 @@ class BaseTrainer:
         seed=4545, 
         images=None, 
         controlnet_hint=None, 
+        all_samples=False,
         **kwargs
     ):
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state()
+        output_images = []
         
         if seed is not None:
             torch.manual_seed(seed)
@@ -414,6 +426,11 @@ class BaseTrainer:
             
             if i+1 < len(timesteps):
                 latents = self.scheduler.step(latents, model_output, t, timesteps[i+1])
+                if all_samples:
+                    latents_prev = self.scheduler.pred_original_sample(latents, model_output, t)
+                    if not self.taesd:
+                        latents_prev = latents_prev / self.scaling_factor + self.shift_factor
+                    output_images.extend(self.decode_latents(latents_prev))
             else:
                 latents = self.scheduler.pred_original_sample(latents, model_output, t)
             progress_bar.update(1)
@@ -421,12 +438,12 @@ class BaseTrainer:
         with torch.autocast("cuda", dtype=self.vae_dtype):
             if not self.taesd:
                 latents = latents / self.scaling_factor + self.shift_factor
-            images = self.decode_latents(latents)
+            output_images.extend(self.decode_latents(latents))
         
         torch.set_rng_state(rng_state)
         torch.cuda.set_rng_state(cuda_rng_state)
         
-        return images
+        return output_images
     
     def save_model(self, output_path):
         logger.info(f"モデルを保存します！")
