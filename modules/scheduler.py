@@ -9,8 +9,9 @@ def substitution_t(constants, timesteps, batch_size):
     return constants
 
 class BaseScheduler:
-    def __init__(self, v_prediction=False):
+    def __init__(self, v_prediction=False, zsnr=False):
         self.v_prediction = v_prediction  # velocity予測かどうか
+        self.zsnr = zsnr
         self.make_alpha_beta()
 
     def make_alpha_beta(self, beta_start=0.00085, beta_end=0.012, num_timesteps=1000):
@@ -24,9 +25,16 @@ class BaseScheduler:
 
         # with bar
         self.alphas_bar = torch.cumprod(self.alphas, dim=0)
-        self.betas_bar = 1 - self.alphas_bar
-
         self.sqrt_alphas_bar = torch.sqrt(self.alphas_bar)
+
+        if self.zsnr:
+            sqrt_alphas_bar_0 = self.sqrt_alphas_bar[0].clone()
+            sqrt_alphas_bar_T = self.sqrt_alphas_bar[-1].clone()
+            self.sqrt_alphas_bar -= sqrt_alphas_bar_T
+            self.sqrt_alphas_bar *= sqrt_alphas_bar_0 / (sqrt_alphas_bar_0 - sqrt_alphas_bar_T)
+            self.alphas_bar = self.sqrt_alphas_bar ** 2
+
+        self.betas_bar = 1 - self.alphas_bar
         self.sqrt_betas_bar = torch.sqrt(self.betas_bar)
 
     def set_timesteps(self, num_inference_steps, device="cuda"):
@@ -86,9 +94,10 @@ class BaseScheduler:
             return noise
         
 def time_to_mult(t, sample):
+    num_dims = len(sample.shape) - 1
     ret_t = t.float() / 1000
     ret_t = ret_t.to(sample)
-    return ret_t.view(-1, 1, 1, 1)
+    return ret_t.view((-1,) + (1,) * num_dims)
 
 class FlowScheduler:
     def __init__(self, shift=3.0):

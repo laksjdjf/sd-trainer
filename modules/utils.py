@@ -3,9 +3,9 @@ import os
 from safetensors.torch import load_file, save_file
 import torch
 import math
-from diffusers import UNet2DConditionModel, AutoencoderKL, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel, AutoencoderTiny
-from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel
-from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel
+from diffusers import UNet2DConditionModel, AutoencoderKL, AutoencoderKLHunyuanVideo, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel, HunyuanVideoTransformer3DModel, AutoencoderTiny, Lumina2Transformer2DModel
+from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel
+from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel
 from modules.scheduler import BaseScheduler, FlowScheduler
 
 # データローダー用の関数
@@ -121,6 +121,19 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             diffusers_scheduler = None
         scheduler = FlowScheduler(shift=math.exp(1.15))
         diffusion = FluxDiffusionModel(unet)
+    elif model_type == "lumina2":
+        if os.path.isfile(path):
+            raise NotImplementedError("from_single_file is not implemented for Lumina2")
+        else:
+            text_model = Lumina2TextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = Lumina2Transformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, quantization_config=nf4_config)
+            if taesd:
+                vae = AutoencoderTiny.from_pretrained("madebyollin/taef1", torch_dtype=torch_dtype)
+            else:
+                vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            diffusers_scheduler = None
+        scheduler = FlowScheduler(shift=6.0)
+        diffusion = Lumina2DiffusionModel(unet)
     elif model_type == "auraflow":
         if os.path.isfile(path):
             NotImplementedError("from_single_file is not implemented for AuraFlow")
@@ -133,6 +146,16 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             diffusers_scheduler = None
         scheduler = FlowScheduler(shift=1.73)
         diffusion = AuraFlowDiffusionModel(unet)
+    elif model_type == "hunyuan_video":
+        if os.path.isfile(path):
+            NotImplementedError("from_single_file is not implemented for HunyuanVideo")
+        else:
+            text_model = HunyuanVideoTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
+            unet = HunyuanVideoTransformer3DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
+            vae = AutoencoderKLHunyuanVideo.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            diffusers_scheduler = None
+        scheduler = FlowScheduler(shift=math.exp(1.15))
+        diffusion = HunyuanVideoDiffusionModel(unet)
 
     text_model.clip_skip = clip_skip
     return text_model, vae, diffusion, diffusers_scheduler, scheduler

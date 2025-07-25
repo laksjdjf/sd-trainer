@@ -10,7 +10,7 @@ logger = logging.getLogger("ネットワークちゃん")
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_ATTENTION = ["Transformer2DModel"]
-MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock", "AuraFlowJointTransformerBlock", "AuraFlowSingleTransformerBlock"]
+MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock", "AuraFlowJointTransformerBlock", "AuraFlowSingleTransformerBlock", "Lumina2TransformerBlock"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
@@ -23,7 +23,10 @@ def is_key_allowed(key, key_filters):
     if key_filters is None:
         return True
     else:
-        return any(filter in key for filter in key_filters)
+        if key_filters[0] == "all":
+            return all(filter in key for filter in key_filters if filter != "all")
+        else:
+            return any(filter in key for filter in key_filters)
     
 def detect_module_from_state_dict(state_dict):
     for key in state_dict.keys():
