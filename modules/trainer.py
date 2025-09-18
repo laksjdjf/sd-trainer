@@ -52,10 +52,18 @@ class BaseTrainer:
             self.scaling_factor = 1.5305
             self.shift_factor = 0.0609
             self.input_channels = 16
-        elif model_type == "flux":
+        elif model_type in ["flux", "lumina2"]:
             self.scaling_factor = 0.3611
             self.shift_factor = 0.1159
             self.input_channels = 16
+        elif model_type == "hunyuan_video":
+            self.scaling_factor = 0.476986
+            self.shift_factor = 0
+            self.input_channels = 16
+        elif model_type == "hdm":
+            self.scaling_factor = 1 / torch.tensor(vae.config.latents_std)[None, :, None, None]
+            self.shift_factor = torch.tensor(vae.config.latents_mean)[None, :, None, None]
+            self.input_channels = 4
 
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
@@ -79,15 +87,29 @@ class BaseTrainer:
         
         for i in range(latents.shape[0]):
             latent = latents[i].unsqueeze(0).to(self.vae_dtype)
-            image = self.vae.decode(latent).sample
+            if len(latent.shape) == 4:
+                image = self.vae.decode(latent).sample
+            else:
+                image = self.vae.tiled_decode(latent).sample
             images.append(image)
         images = torch.cat(images, dim=0)
         images = (images / 2 + 0.5).clamp(0, 1)
-        images = images.cpu().permute(0, 2, 3, 1).float().numpy()
-        images = (images * 255).round().astype("uint8")
-        pil_images = [Image.fromarray(image) for image in images]
+
         self.vae.to(self.vae.device)
-        return pil_images
+
+        if len(images.shape) == 5:
+            videos = []
+            for video in images:
+                video = video.cpu().permute(1, 2, 3, 0).float().numpy()
+                video = (video * 255).round().astype("uint8")
+                pil_images = [Image.fromarray(image) for image in video]
+                videos.append(pil_images)
+            return videos
+        else:
+            images = images.cpu().permute(0, 2, 3, 1).float().numpy()
+            images = (images * 255).round().astype("uint8")
+            pil_images = [Image.fromarray(image) for image in images]
+            return pil_images
 
     @torch.no_grad()
     def encode_latents(self, images):
@@ -98,7 +120,10 @@ class BaseTrainer:
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
-        images = torch.stack([to_tensor_norm(image) for image in images]).to(self.vae.device, dtype=self.vae_dtype)
+        if isinstance(images[0], list):
+            images = torch.stack([[to_tensor_norm(image) for image in video] for video in images]).to(self.vae.device, dtype=self.vae_dtype)
+        else:
+            images = torch.stack([to_tensor_norm(image) for image in images]).to(self.vae.device, dtype=self.vae_dtype)
         if not self.taesd:
             latents = self.vae.encode(images).latent_dist.sample()
         else:
@@ -114,12 +139,20 @@ class BaseTrainer:
         self.autocast_dtype = dtype
         self.vae_dtype = vae_dtype or dtype
 
-        self.diffusion.unet.to(device, dtype=dtype).eval()
-        self.text_model.to(device, dtype=dtype).eval()
+        self.diffusion.unet.to(device)
+        self.text_model.to(device)
+        if not self.nf4:
+            self.diffusion.unet.to(dtype=dtype).eval()
+            self.text_model.to(dtype=dtype).eval()
+            
         self.vae.to(device, dtype=self.vae_dtype).eval()
 
         if self.network:
             self.network.to(device, dtype=dtype).eval()
+
+        if isinstance(self.scaling_factor, torch.Tensor):
+            self.scaling_factor = self.scaling_factor.to(device)
+            self.shift_factor = self.shift_factor.to(device)
     
     def prepare_modules_for_training(self, device="cuda"):
         config = self.config
@@ -141,7 +174,8 @@ class BaseTrainer:
         self.grad_scaler = torch.amp.GradScaler("cuda", enabled=self.autocast_dtype == torch.float16)
 
         
-        self.text_model.to("cuda", dtype=self.te_dtype)
+        if not self.nf4:
+            self.text_model.to("cuda", dtype=self.te_dtype)
         if  hasattr(torch, 'float8_e4m3fn') and self.te_dtype== torch.float8_e4m3fn:
             self.text_model.prepare_fp8(self.autocast_dtype) # fp8時のエラー回避
 
@@ -164,6 +198,10 @@ class BaseTrainer:
         self.text_model.train(config.train_text_encoder)
         self.text_model.requires_grad_(config.train_text_encoder)
         self.vae.eval()
+
+        if isinstance(self.scaling_factor, torch.Tensor):
+            self.scaling_factor = self.scaling_factor.to(device)
+            self.shift_factor = self.shift_factor.to(device)
 
     def prepare_network(self, config):
         if config is None:
@@ -344,7 +382,8 @@ class BaseTrainer:
         guidance_scale=7.0, 
         denoise=1.0, 
         seed=4545, 
-        images=None, 
+        images=None,
+        frames=None,
         controlnet_hint=None, 
         all_samples=False,
         **kwargs
@@ -386,7 +425,10 @@ class BaseTrainer:
         timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
 
         if images is None:
-            latents = torch.ones(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+            if frames is None:
+                latents = torch.ones(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+            else:
+                latents = torch.ones(batch_size, self.input_channels, (frames + 3) // 4, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype):
                 latents = self.encode_latents(images)
@@ -494,6 +536,6 @@ class BaseTrainer:
     @classmethod
     def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None, nf4=False, taesd=False):
         if clip_skip is None:
-            clip_skip = -2 if model_type == "sdxl" else -1
+            clip_skip = -2 if model_type in ["sdxl", "lumina2"] else -3 if model_type == "hunyuan_video" else -1
         text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant, nf4, taesd)
         return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4, taesd)
