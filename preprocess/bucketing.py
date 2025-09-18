@@ -6,14 +6,15 @@ from PIL import Image
 import json
 import argparse
 import numpy as np
+from functools import partial
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--input_dir', '-i', type=str, required=True, help="元のデータセット")
 parser.add_argument('--output_dir', '-o', type=str, required=False, help="保存先のディレクトリ")
 parser.add_argument('--threads', '-p', required=False, default=12, type=int, help="プロセス数")
-parser.add_argument('--resolution', '-r', required=False, default=768, type=int, help="bucketの解像度：64の倍数を推奨する")
+parser.add_argument('--resolution', '-r', required=False, default=1024, type=int, help="bucketの解像度：64の倍数を推奨する")
 parser.add_argument('--min_length', required=False, default=512, type=int, help="bucketの最小長")
-parser.add_argument('--max_length', required=False, default=1024, type=int, help="bucketの最大長")
+parser.add_argument('--max_length', required=False, default=2048, type=int, help="bucketの最大長")
 parser.add_argument('--max_ratio', required=False, default=2.0, type=float, help="最大アスペクト比（逆数が最小アスペクト比）")
 args = parser.parse_args()
 
@@ -48,34 +49,52 @@ def make_buckets():
     ratios = np.sort(ratios)
     return buckets, ratios
 
-def resize_image(file):
-    image = Image.open(file)
-    image = image.convert("RGB")
-    ratio = image.width / image.height
+def get_png_resolution(filepath):
+    with open(filepath, 'rb') as f:
+        header = f.read(24)
+        if header[:8] != b'\x89PNG\r\n\x1a\n':
+            raise ValueError("Not a PNG file")
+        width = int.from_bytes(header[16:20], 'big')
+        height = int.from_bytes(header[20:24], 'big')
+        return width, height
+
+def resize_image(file, buckets, ratios):
+    filepath = os.path.join(args.output_dir, os.path.basename(file))
+    exists = os.path.exists(filepath)
+    if exists:
+        width, height = get_png_resolution(filepath)
+        ratio = width / height
+    else:
+        image = Image.open(file)
+        image = image.convert("RGB")
+        ratio = image.width / image.height
+        width, height = image.size
     ar_errors = ratios - ratio
     indice = np.argmin(np.abs(ar_errors))  # 一番近いアスペクト比のインデックス
     bucket_width, bucket_height = buckets[indice]
     ar_error = ar_errors[indice]
-    if ar_error <= 0:  # 幅＜高さなら高さを合わせる
-        temp_width = int(image.width*bucket_height/image.height)
-        image = image.resize((temp_width, bucket_height))  # アスペクト比を変えずに高さだけbucketに合わせる
-        left = (temp_width - bucket_width) / 2  # 切り取り境界左側
-        right = bucket_width + left  # 切り取り境界右側
-        image = image.crop((left, 0, right, bucket_height))  # 左右切り取り
-    else:  # 幅高さを逆にしたもの
-        temp_height = int(image.height*bucket_width/image.width)
-        image = image.resize((bucket_width, temp_height))
-        upper = (temp_height - bucket_height) / 2
-        lower = bucket_height + upper
-        image = image.crop((0, upper, bucket_width, lower))
-    image.save(os.path.join(args.output_dir, os.path.basename(file)))
+    if not exists:
+        if ar_error <= 0:  # 幅＜高さなら高さを合わせる
+            temp_width = int(width*bucket_height/height)
+            image = image.resize((temp_width, bucket_height))  # アスペクト比を変えずに高さだけbucketに合わせる
+            left = (temp_width - bucket_width) / 2  # 切り取り境界左側
+            right = bucket_width + left  # 切り取り境界右側
+            image = image.crop((left, 0, right, bucket_height))  # 左右切り取り
+        else:  # 幅高さを逆にしたもの
+            temp_height = int(height*bucket_width/width)
+            image = image.resize((bucket_width, temp_height))
+            upper = (temp_height - bucket_height) / 2
+            lower = bucket_height + upper
+            image = image.crop((0, upper, bucket_width, lower))
+        image.save(os.path.join(args.output_dir, os.path.basename(file)))
     return [os.path.splitext(os.path.basename(file))[0], str((bucket_width, bucket_height))]
 
 def main():
     files = []
     [files.extend(glob.glob(f'{args.input_dir}' + '/*.' + e)) for e in ['jpg', 'jpeg', 'png', 'bmp', 'webp']]
-    with ProcessPoolExecutor(8) as e:
-        results = list(tqdm(e.map(resize_image, files), total=len(files)))
+    resize_image_partial = partial(resize_image, buckets=buckets, ratios=ratios)
+    with ProcessPoolExecutor(1) as e:
+        results = list(tqdm(e.map(resize_image_partial, files), total=len(files)))
 
     # メタデータを書き込む（どのファイルがどのbucketにあるかを保存しておく）
     meta = {}

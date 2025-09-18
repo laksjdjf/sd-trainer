@@ -60,6 +60,10 @@ class BaseTrainer:
             self.scaling_factor = 0.476986
             self.shift_factor = 0
             self.input_channels = 16
+        elif model_type == "hdm":
+            self.scaling_factor = 1 / torch.tensor(vae.config.latents_std)[None, :, None, None]
+            self.shift_factor = torch.tensor(vae.config.latents_mean)[None, :, None, None]
+            self.input_channels = 4
 
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
@@ -145,6 +149,10 @@ class BaseTrainer:
 
         if self.network:
             self.network.to(device, dtype=dtype).eval()
+
+        if isinstance(self.scaling_factor, torch.Tensor):
+            self.scaling_factor = self.scaling_factor.to(device)
+            self.shift_factor = self.shift_factor.to(device)
     
     def prepare_modules_for_training(self, device="cuda"):
         config = self.config
@@ -190,6 +198,10 @@ class BaseTrainer:
         self.text_model.train(config.train_text_encoder)
         self.text_model.requires_grad_(config.train_text_encoder)
         self.vae.eval()
+
+        if isinstance(self.scaling_factor, torch.Tensor):
+            self.scaling_factor = self.scaling_factor.to(device)
+            self.shift_factor = self.shift_factor.to(device)
 
     def prepare_network(self, config):
         if config is None:

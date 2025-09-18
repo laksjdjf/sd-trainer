@@ -5,9 +5,10 @@ from torchvision import transforms
 from diffusers import AutoencoderKL
 from tqdm import tqdm
 import argparse
-from PIL import Image
+from PIL import Image, PngImagePlugin
 import json
 
+PngImagePlugin._safe_zlib_decompress = lambda x: b'' 
 parser = argparse.ArgumentParser()
 parser.add_argument('--directory', '-d', type=str, required=True)
 parser.add_argument('--output_path', '-o', type=str, required=True)

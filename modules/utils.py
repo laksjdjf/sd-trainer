@@ -4,9 +4,10 @@ from safetensors.torch import load_file, save_file
 import torch
 import math
 from diffusers import UNet2DConditionModel, AutoencoderKL, AutoencoderKLHunyuanVideo, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel, HunyuanVideoTransformer3DModel, AutoencoderTiny, Lumina2Transformer2DModel
-from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel
-from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel
+from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel
+from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel, HDMTextModel
 from modules.scheduler import BaseScheduler, FlowScheduler
+from hdm import XUDiTConditionModel
 
 # データローダー用の関数
 def collate_fn(x):
@@ -156,6 +157,16 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             diffusers_scheduler = None
         scheduler = FlowScheduler(shift=math.exp(1.15))
         diffusion = HunyuanVideoDiffusionModel(unet)
+    elif model_type == "hdm":
+        if os.path.isfile(path):
+            NotImplementedError("from_single_file is not implemented for HDM")
+        else:
+            text_model = HDMTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = XUDiTConditionModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
+            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            diffusers_scheduler = None
+        scheduler = FlowScheduler(shift=1.0)
+        diffusion = HDMDiffusionModel(unet)
 
     text_model.clip_skip = clip_skip
     return text_model, vae, diffusion, diffusers_scheduler, scheduler
