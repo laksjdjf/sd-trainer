@@ -1,0 +1,86 @@
+import torch
+import torch.nn as nn
+from transformers import CLIPTokenizer, CLIPTextModelWithProjection, T5EncoderModel, T5TokenizerFast
+from .base import BaseTextModel
+
+class SD3TextModel(BaseTextModel):
+    def __init__(
+        self, 
+        tokenizer:CLIPTokenizer, 
+        tokenizer_2:CLIPTokenizer, 
+        tokenizer_3:T5TokenizerFast,
+        text_encoder:CLIPTextModelWithProjection, 
+        text_encoder_2:CLIPTextModelWithProjection,
+        text_encoder_3:T5EncoderModel, 
+        clip_skip:int=-1
+    ):
+        super().__init__()
+        self.tokenizers = [tokenizer, tokenizer_2, tokenizer_3]
+        self.text_encoders = nn.ModuleList([text_encoder, text_encoder_2, text_encoder_3])
+        self.clip_skip = clip_skip
+
+    def get_hidden_states(self, tokens):
+        encoder_output = self.text_encoders[0](tokens[0], output_hidden_states=True)
+        last_hidden_state = encoder_output.last_hidden_state
+        # calculate pooled_output
+        eos_token_index = torch.where(tokens[0] == self.tokenizers[0].eos_token_id)[1][0].to(device=last_hidden_state.device)
+        pooled_output = last_hidden_state[torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device), eos_token_index]
+        pooled_output = self.text_encoders[0].text_projection(pooled_output)
+
+        encoder_hidden_states = encoder_output.hidden_states[self.clip_skip]
+
+        encoder_output_2 = self.text_encoders[1](tokens[1], output_hidden_states=True)
+        last_hidden_state = encoder_output_2.last_hidden_state
+        # calculate pooled_output
+        eos_token_index = torch.where(tokens[1] == self.tokenizers[1].eos_token_id)[1].to(device=last_hidden_state.device)
+        pooled_output_2 = last_hidden_state[torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),eos_token_index]
+        pooled_output_2 = self.text_encoders[1].text_projection(pooled_output_2)
+
+        encoder_hidden_states_2 = encoder_output_2.hidden_states[self.clip_skip]
+
+        encoder_hidden_states_3 = self.text_encoders[2](tokens[2], output_hidden_states=False)[0]
+
+        # (b, n, 768) + (b, n, 1280) -> (b, n, 2048)
+        encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_2], dim=2)
+
+        # pad
+        encoder_hidden_states = torch.cat([encoder_hidden_states, torch.zeros_like(encoder_hidden_states)], dim=2)
+        encoder_hidden_states = torch.cat([encoder_hidden_states, encoder_hidden_states_3], dim=1) # t5
+
+        pooled_output = torch.cat([pooled_output, pooled_output_2], dim=1)
+
+        return encoder_hidden_states, pooled_output, None
+
+    @classmethod
+    def from_pretrained(cls, path, clip_skip=-1, revision=None, torch_dtype=None, variant=None, max_length=128):
+        tokenizer = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer', revision=revision)
+        text_encoder = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer_2 = CLIPTokenizer.from_pretrained(path, subfolder='tokenizer_2', revision=revision)
+        text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(path, subfolder='text_encoder_2', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer_3 = T5TokenizerFast.from_pretrained(path, subfolder='tokenizer_3', revision=revision)
+        text_encoder_3 = T5EncoderModel.from_pretrained(path, subfolder='text_encoder_3', revision=revision, torch_dtype=torch_dtype, variant=variant)
+        tokenizer_3.model_max_length = max_length
+
+        return cls(tokenizer, tokenizer_2, tokenizer_3, text_encoder, text_encoder_2, text_encoder_3, clip_skip=clip_skip)
+
+    def prepare_fp8(self, autocast_dtype):
+        for text_encoder in self.text_encoders:
+            if hasattr(text_encoder, 'text_model'):
+                text_encoder.text_model.embeddings.to(autocast_dtype)
+
+        def forward_hook(modules):
+            def forward(hidden_states):
+                hidden_gelu = modules.act(modules.wi_0(hidden_states))
+                hidden_linear = modules.wi_1(hidden_states)
+                hidden_states = hidden_gelu * hidden_linear
+                hidden_states = modules.dropout(hidden_states)
+
+                hidden_states = modules.wo(hidden_states)
+                return hidden_states
+            return forward
+
+        for modules in self.text_encoders[2].modules():
+            if modules.__class__.__name__ in ["T5LayerNorm", "Embedding"]:
+                modules.to(autocast_dtype)
+            if modules.__class__.__name__ in ["T5DenseGatedActDense"]:
+                modules.forward = forward_hook(modules) 
