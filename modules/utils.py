@@ -4,7 +4,7 @@ from safetensors.torch import load_file, save_file
 import torch
 import math
 from diffusers import UNet2DConditionModel, AutoencoderKL, AutoencoderKLHunyuanVideo, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel, HunyuanVideoTransformer3DModel, AutoencoderTiny, Lumina2Transformer2DModel
-from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel
+from modules.diffusion import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel
 from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel, HDMTextModel
 from modules.scheduler import BaseScheduler, FlowScheduler
 from hdm import XUDiTConditionModel
