@@ -1,0 +1,7 @@
+# Dataset configuration
+module: modules.dataset.BaseDataset
+args:
+  batch_size: 1
+  path: "dataset"
+  metadata: "buckets.json"
+  original_size: "original_size.json"

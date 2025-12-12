@@ -1,0 +1,13 @@
+# LoRA network configuration
+module: "networks.manager.NetworkManager"
+resume: null
+train: true
+args:
+  module: networks.lora.LoRAModule
+  file_name: null
+  unet_key_filters: null
+  module_args:
+    rank: 4
+  conv_module_args:
+    rank: 4
+  text_module_args: null
