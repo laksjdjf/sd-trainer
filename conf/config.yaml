@@ -18,7 +18,7 @@ main:
   save_epochs: 1
   sample_steps: null
   sample_epochs: 1
-  log_level: "logging.INFO"
+  log_level: "INFO"
   wandb: null
 
 trainer:
