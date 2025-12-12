@@ -1,0 +1,5 @@
+# DataLoader configuration
+module: torch.utils.data.DataLoader
+args:
+  num_workers: 4
+  shuffle: true

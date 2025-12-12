@@ -1,0 +1,27 @@
+# Trainer configuration
+module: modules.trainer.BaseTrainer
+train_unet: false
+train_text_encoder: false
+te_device: "cuda"
+vae_device: "cuda"
+train_dtype: "torch.float32"
+weight_dtype: "torch.bfloat16"
+autocast_dtype: null
+vae_dtype: null
+lr: "1e-3"
+lr_scheduler: "cosine"
+noise_offset: 0.0
+step_range: null
+gradient_checkpointing: true
+optimizer:
+  module: torch.optim.AdamW
+  args: null
+merging_loras: null
+validation_num_samples: 4
+validation_seed: 4545
+validation_args:
+  prompt: "1girl, solo"
+  negative_prompt: "lowres, bad anatomy, bad hands, worst quality"
+  width: 832
+  height: 1216
+additional_conf: {}

@@ -20,7 +20,7 @@ class MainConfig:
     save_epochs: Optional[int] = 1
     sample_steps: Optional[int] = None
     sample_epochs: Optional[int] = 1
-    log_level: str = "loggging.WARNING"
+    log_level: str = "WARNING"
     wandb: Optional[str] = None
 
 @dataclass

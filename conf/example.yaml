@@ -1,0 +1,18 @@
+# Hydra example configuration
+# このファイルは、conf/config.yamlをベースにカスタム設定を示す例です
+# 
+# 使用方法:
+# python main.py --config-name=example
+# または
+# python main.py main.wandb=sd-trainer network.train=true
+
+defaults:
+  - config  # ベース設定を継承
+  - _self_
+
+# カスタマイズする項目だけを記述
+main:
+  wandb: sd-trainer  # wandbプロジェクト名を設定
+
+network:
+  train: true  # ネットワークトレーニングを有効化

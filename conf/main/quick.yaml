@@ -1,0 +1,20 @@
+# Quick training configuration
+# Usage: python main.py main=quick
+model_path: "cagliostrolab/animagine-xl-3.0"
+output_path: "output_quick"
+seed: 4545
+model_type: "sd1"
+revision: null
+torch_dtype: null
+variant: null
+nf4: false
+taesd: false
+clip_skip: null
+steps: null
+epochs: 1  # Quick training - 1 epoch only
+save_steps: null
+save_epochs: 1
+sample_steps: null
+sample_epochs: 1
+log_level: "INFO"
+wandb: null

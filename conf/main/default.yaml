@@ -1,0 +1,19 @@
+# Main configuration
+model_path: "cagliostrolab/animagine-xl-3.0"
+output_path: "output"
+seed: 4545
+model_type: "sd1"
+revision: null
+torch_dtype: null
+variant: null
+nf4: false
+taesd: false
+clip_skip: null
+steps: null
+epochs: 5
+save_steps: null
+save_epochs: 1
+sample_steps: null
+sample_epochs: 1
+log_level: "INFO"
+wandb: null

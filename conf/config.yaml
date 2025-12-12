@@ -1,0 +1,19 @@
+defaults:
+  - main: default
+  - trainer: base
+  - dataset: base
+  - dataloader: default
+  - network: lora
+  - _self_
+
+# ControlNet configuration (optional)
+controlnet: null
+
+# Hydra configuration
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
