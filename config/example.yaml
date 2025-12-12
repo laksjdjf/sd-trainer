@@ -1,3 +1,38 @@
+# ⚠️ 移行のお知らせ
+
+このプロジェクトは **Hydra** に対応しました！
+
+## 新しい使い方（推奨）
+
+Hydraを使用する場合、設定ファイルは `conf/` ディレクトリに配置してください。
+
+```bash
+# デフォルト設定で実行
+python main.py
+
+# コマンドラインで設定をオーバーライド
+python main.py main.epochs=10 main.seed=1234
+
+# conf/example.yaml を使用
+python main.py --config-name=example
+```
+
+## 古い使い方（非推奨）
+
+以前の方法でも動作しますが、Hydraの機能は利用できません：
+
+```bash
+# 注意：この方法は動作しません
+# python main.py config/example.yaml
+```
+
+このファイル（config/example.yaml）は参考用として残されています。
+新しい設定は `conf/config.yaml` と `conf/example.yaml` を参照してください。
+
+---
+
+# 以下は古い設定ファイル（参考用）
+
 main:
   model_path: "cagliostrolab/animagine-xl-3.0"
   output_path: "output"

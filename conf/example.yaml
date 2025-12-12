@@ -8,6 +8,7 @@
 
 defaults:
   - config  # ベース設定を継承
+  - _self_
 
 # カスタマイズする項目だけを記述
 main:
