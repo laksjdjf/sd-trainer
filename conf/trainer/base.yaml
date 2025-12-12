@@ -4,8 +4,8 @@ train_unet: false
 train_text_encoder: false
 te_device: "cuda"
 vae_device: "cuda"
-train_dtype: torch.float32
-weight_dtype: torch.bfloat16
+train_dtype: "torch.float32"
+weight_dtype: "torch.bfloat16"
 autocast_dtype: null
 vae_dtype: null
 lr: "1e-3"
