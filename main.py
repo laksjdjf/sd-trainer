@@ -13,12 +13,13 @@ logger = logging.getLogger("メインちゃん")
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(config: DictConfig):
-    # Merge with structured config for validation
-    config = OmegaConf.merge(OmegaConf.structured(Config), config)
+    # Merge with structured config for validation (config comes first to preserve hydra metadata)
+    config = OmegaConf.merge(config, OmegaConf.structured(Config))
     
-    # Setup logging
+    # Setup logging with user-specified log level
+    log_level = getattr(logging, config.main.log_level.upper(), logging.INFO)
     logging.basicConfig(
-        level=logging.INFO, 
+        level=log_level, 
         format="%(message)s", 
         datefmt="[%X]", 
         handlers=[RichHandler(markup=True, rich_tracebacks=True)]
