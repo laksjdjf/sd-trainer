@@ -1,5 +1,5 @@
-from omegaconf import OmegaConf
-import sys
+from omegaconf import OmegaConf, DictConfig
+import hydra
 import math
 from accelerate.utils import set_seed
 from modules.utils import get_attr_from_config, collate_fn
@@ -11,7 +11,21 @@ from rich.logging import RichHandler
 
 logger = logging.getLogger("メインちゃん")
 
-def main(config):
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(config: DictConfig):
+    # Merge with structured config for validation
+    config = OmegaConf.merge(OmegaConf.structured(Config), config)
+    
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO, 
+        format="%(message)s", 
+        datefmt="[%X]", 
+        handlers=[RichHandler(markup=True, rich_tracebacks=True)]
+    )
+    
+    logger.info(f"設定を表示するよ！")
+    print(OmegaConf.to_yaml(config))
 
     set_seed(config.main.seed)
     logger.info(f"シードは{config.main.seed}だよ！")
@@ -93,8 +107,4 @@ def main(config):
         logger.info(f"エポック{epoch+1}が終わったよ！")
 
 if __name__ == "__main__":
-    config = OmegaConf.load(sys.argv[1])
-    config = OmegaConf.merge(OmegaConf.structured(Config), config)
-    logging.basicConfig(level=logging.INFO, format="%(message)s", datefmt="[%X]", handlers=[RichHandler(markup=True,rich_tracebacks=True)])
-    print(OmegaConf.to_yaml(config))
-    main(config)
+    main()

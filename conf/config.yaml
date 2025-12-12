@@ -1,0 +1,87 @@
+defaults:
+  - _self_
+
+main:
+  model_path: "cagliostrolab/animagine-xl-3.0"
+  output_path: "output"
+  seed: 4545
+  model_type: "sd1"
+  revision: null
+  torch_dtype: null
+  variant: null
+  nf4: false
+  taesd: false
+  clip_skip: null
+  steps: null
+  epochs: 5
+  save_steps: null
+  save_epochs: 1
+  sample_steps: null
+  sample_epochs: 1
+  log_level: "logging.INFO"
+  wandb: null
+
+trainer:
+  module: modules.trainer.BaseTrainer
+  train_unet: false
+  train_text_encoder: false
+  te_device: "cuda"
+  vae_device: "cuda"
+  train_dtype: torch.float32
+  weight_dtype: torch.bfloat16
+  autocast_dtype: null
+  vae_dtype: null
+  lr: "1e-3"
+  lr_scheduler: "cosine"
+  noise_offset: 0.0
+  step_range: null
+  gradient_checkpointing: true
+  optimizer:
+    module: torch.optim.AdamW
+    args: null
+  merging_loras: null
+  validation_num_samples: 4
+  validation_seed: 4545
+  validation_args:
+    prompt: "1girl, solo"
+    negative_prompt: "lowres, bad anatomy, bad hands, worst quality"
+    width: 832
+    height: 1216
+  additional_conf: {}
+
+dataset:
+  module: modules.dataset.BaseDataset
+  args:
+    batch_size: 1
+    path: "dataset"
+    metadata: "buckets.json"
+    original_size: "original_size.json"
+
+dataloader:
+  module: torch.utils.data.DataLoader
+  args:
+    num_workers: 4
+    shuffle: true
+
+network:
+  module: "networks.manager.NetworkManager"
+  resume: null
+  train: true
+  args:
+    module: networks.lora.LoRAModule
+    file_name: null
+    unet_key_filters: null
+    module_args:
+      rank: 4
+    conv_module_args:
+      rank: 4
+    text_module_args: null
+
+controlnet: null
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
