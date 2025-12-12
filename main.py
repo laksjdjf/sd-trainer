@@ -19,7 +19,16 @@ def main(config: DictConfig):
     config = OmegaConf.merge(OmegaConf.structured(Config), config)
     
     # Setup logging with user-specified log level
-    log_level = getattr(logging, config.main.log_level.upper(), logging.INFO)
+    # Validate and parse log level, raise error if invalid
+    try:
+        log_level = getattr(logging, config.main.log_level.upper())
+    except AttributeError:
+        valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+        raise ValueError(
+            f"Invalid log level '{config.main.log_level}'. "
+            f"Must be one of: {', '.join(valid_levels)}"
+        )
+    
     logging.basicConfig(
         level=log_level, 
         format="%(message)s", 
