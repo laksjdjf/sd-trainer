@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+tea_debug.log
+
+# Config files (except example)
+config/*.yaml
+!config/example.yaml
+conf/
+
+# Data and models
+/data/
+/trained/
+/image_logs/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+
+# Tests
+tests/
+
+# Temporary files
+test.png
+temp/
+tmp/
+
+# W&B (Weights & Biases)
+/wandb/
+
+# OS
+.DS_Store
+Thumbs.db

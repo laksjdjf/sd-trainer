@@ -2,7 +2,7 @@ import os
 import numpy as np
 import torch
 from torchvision import transforms
-from diffusers import AutoencoderKL
+from diffusers import AutoencoderKL, AutoencoderKLFlux2
 from tqdm import tqdm
 import argparse
 from PIL import Image, PngImagePlugin
@@ -63,7 +63,7 @@ def main():
 
 
 def main_batch():
-    vae = AutoencoderKL.from_pretrained(args.model, subfolder="vae")
+    vae = AutoencoderKLFlux2.from_pretrained(args.model, subfolder="vae")
     vae.eval()
     vae.to("cuda", dtype=dtype)
 

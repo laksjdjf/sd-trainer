@@ -5,12 +5,13 @@ from modules.utils import save_sd, load_sd
 import os
 import contextlib
 import logging
+import re
 
 logger = logging.getLogger("ネットワークちゃん")
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_ATTENTION = ["Transformer2DModel"]
-MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock", "AuraFlowJointTransformerBlock", "AuraFlowSingleTransformerBlock", "Lumina2TransformerBlock", "TransformerBlock"]
+MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock", "AuraFlowJointTransformerBlock", "AuraFlowSingleTransformerBlock", "Lumina2TransformerBlock", "TransformerBlock", "ZImageTransformerBlock", "Flux2TransformerBlock"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
 LORA_PREFIX_UNET = 'lora_unet'
@@ -24,9 +25,9 @@ def is_key_allowed(key, key_filters):
         return True
     else:
         if key_filters[0] == "all":
-            return all(filter in key for filter in key_filters if filter != "all")
+            return all(re.search(filter, key) for filter in key_filters if filter != "all")
         else:
-            return any(filter in key for filter in key_filters)
+            return any(re.search(filter, key) for filter in key_filters)
     
 def detect_module_from_state_dict(state_dict):
     for key in state_dict.keys():

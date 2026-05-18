@@ -3,9 +3,9 @@ import os
 from safetensors.torch import load_file, save_file
 import torch
 import math
-from diffusers import UNet2DConditionModel, AutoencoderKL, AutoencoderKLHunyuanVideo, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel, HunyuanVideoTransformer3DModel, AutoencoderTiny, Lumina2Transformer2DModel
-from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel
-from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel, HDMTextModel
+from diffusers import UNet2DConditionModel, AutoencoderKL, AutoencoderKLHunyuanVideo, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel, HunyuanVideoTransformer3DModel, AutoencoderTiny, Lumina2Transformer2DModel, ZImageTransformer2DModel, Flux2Transformer2DModel, AutoencoderKLFlux2
+from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel, ZImageDiffusionModel, Flux2KleinDiffusionModel
+from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel, HDMTextModel, ZImageTextModel, Flux2KleinTextModel
 from modules.scheduler import BaseScheduler, FlowScheduler
 from hdm import XUDiTConditionModel
 
@@ -167,6 +167,28 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             diffusers_scheduler = None
         scheduler = FlowScheduler(shift=1.0)
         diffusion = HDMDiffusionModel(unet)
+    elif model_type == "zimage":
+        if os.path.isfile(path):
+            NotImplementedError("from_single_file is not implemented for HunyuanVideo")
+        else:
+            text_model = ZImageTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            #unet = ZImageTransformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
+            unet = ZImageTransformer2DModel.from_pretrained("ostris/Z-Image-De-Turbo", subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
+            vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            diffusers_scheduler = None
+        scheduler = FlowScheduler(shift=math.exp(1.15))
+        diffusion = ZImageDiffusionModel(unet)
+    elif model_type == "flux2_klein":
+        if os.path.isfile(path):
+            NotImplementedError("from_single_file is not implemented for Flux Klein")
+        else:
+            text_model = Flux2KleinTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant)
+            unet = Flux2Transformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
+            vae = AutoencoderKLFlux2.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
+            diffusers_scheduler = None
+        scheduler = FlowScheduler(shift=math.exp(1.15))
+        diffusion = Flux2KleinDiffusionModel(unet)
+
 
     text_model.clip_skip = clip_skip
     return text_model, vae, diffusion, diffusers_scheduler, scheduler

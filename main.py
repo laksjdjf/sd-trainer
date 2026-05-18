@@ -36,6 +36,8 @@ def main(config):
     dataloder_cls = get_attr_from_config(config.dataloader.module)
     dataloader = dataloder_cls(dataset, collate_fn=collate_fn, **config.dataloader.args)
 
+    logger.info(f"データセットのサイズは{len(dataset)}だよ！")
+
     trainer.prepare_modules_for_training()
     trainer.prepare_network(config.network)
     trainer.prepare_controlnet(config.controlnet)
@@ -50,7 +52,7 @@ def main(config):
 
     steps_per_epoch = len(dataloader)
     total_steps = config.main.steps or steps_per_epoch * config.main.epochs
-    total_epochs = config.main.epochs or math.floor(total_steps / steps_per_epoch)
+    total_epochs = config.main.epochs or math.ceil(total_steps / steps_per_epoch)
     logger.info(f"トータルのステップ数は{total_steps}だよ！")
 
     trainer.prepare_lr_scheduler(total_steps)

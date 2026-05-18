@@ -64,7 +64,15 @@ class BaseTrainer:
             self.scaling_factor = 1 / torch.tensor(vae.config.latents_std)[None, :, None, None]
             self.shift_factor = torch.tensor(vae.config.latents_mean)[None, :, None, None]
             self.input_channels = 4
-
+        elif model_type == "zimage":
+            self.scaling_factor = 0.3611
+            self.shift_factor = 0.1159
+            self.input_channels = 16
+        elif model_type == "flux2_klein":
+            self.scaling_factor = 1 / torch.sqrt(vae.bn.running_var.view(1, -1, 4, 1, 1).mean(dim=2) + 1e-4)
+            self.shift_factor = vae.bn.running_mean.view(1, -1, 4, 1, 1).mean(dim=2)
+            self.input_channels = 32
+        
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
                 NetworkManager(
@@ -131,16 +139,16 @@ class BaseTrainer:
         self.vae.to(self.vae.device)
         return latents
     
-    def to(self, device="cuda", dtype=torch.float16, vae_dtype=None):
+    def to(self, device="cuda", dtype=torch.float16, vae_dtype=None, te_device=None):
         self.device = device
-        self.te_device = device
+        self.te_device = te_device or device
         self.vae_device = device
         
         self.autocast_dtype = dtype
         self.vae_dtype = vae_dtype or dtype
 
         self.diffusion.unet.to(device)
-        self.text_model.to(device)
+        self.text_model.to(self.te_device)
         if not self.nf4:
             self.diffusion.unet.to(dtype=dtype).eval()
             self.text_model.to(dtype=dtype).eval()
@@ -175,7 +183,7 @@ class BaseTrainer:
 
         
         if not self.nf4:
-            self.text_model.to("cuda", dtype=self.te_dtype)
+            self.text_model.to("cuda" if self.te_device == "cpu" else self.te_device, dtype=self.te_dtype)
         if  hasattr(torch, 'float8_e4m3fn') and self.te_dtype== torch.float8_e4m3fn:
             self.text_model.prepare_fp8(self.autocast_dtype) # fp8時のエラー回避
 
@@ -311,6 +319,7 @@ class BaseTrainer:
         else:
             with torch.autocast("cuda", dtype=self.autocast_dtype):
                 text_output = self.text_model(batch["captions"])
+            text_output = text_output.to(self.device)
 
         if "size_condition" in batch:
             size_condition = batch["size_condition"].to(self.device)
@@ -439,9 +448,11 @@ class BaseTrainer:
         noise = torch.randn_like(latents)
         latents = self.scheduler.add_noise(latents, noise, timesteps[0])
         if not use_cache:
-            self.text_model.to("cuda")
+            if self.te_device == "cpu":
+                self.text_model.to("cuda")
             with torch.autocast("cuda", dtype=self.autocast_dtype):
                 text_output = self.text_model(prompt)
+            text_output = text_output.to(self.device)
             self.text_model.to(self.te_device)
 
         if controlnet_hint is not None:
@@ -536,6 +547,6 @@ class BaseTrainer:
     @classmethod
     def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None, nf4=False, taesd=False):
         if clip_skip is None:
-            clip_skip = -2 if model_type in ["sdxl", "lumina2"] else -3 if model_type == "hunyuan_video" else -1
+            clip_skip = -2 if model_type in ["sdxl", "lumina2", "zimage"] else -3 if model_type == "hunyuan_video" else -1
         text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant, nf4, taesd)
         return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4, taesd)
