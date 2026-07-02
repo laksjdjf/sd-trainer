@@ -1,8 +1,12 @@
-#勘で設定する。torchとかはある前提。普通入れてるやろっていうライブラリ入れない。
-diffusers>=0.30.0
+# 依存管理はuvに移行しました。基本は `uv sync` を使ってください(pyproject.toml / uv.lock参照)。
+# 実行例: uv run python main.py config/example.yaml
+#
+# pipで直接入れる場合の参考(バージョン整合はuv.lockが正):
+diffusers @ git+https://github.com/huggingface/diffusers.git
+transformers>=5,<6
 accelerate
 wandb
-transformers
 omegaconf
 safetensors
+rich
 diffusers-anima @ git+https://github.com/hdae/diffusers-anima.git ; python_version >= "3.12"

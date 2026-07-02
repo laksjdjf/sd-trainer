@@ -1,0 +1,47 @@
+[project]
+name = "sd-trainer"
+version = "0.1.0"
+description = "Stable Diffusion系モデルの学習フレームワーク"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.11,<2.12",
+    "torchvision",
+    "xformers>=0.0.35",
+    # transformers 5.x のCLIPTextModelフラット化への対応がリリース版(0.38.0)に
+    # 未収録のため、修正済みのgit mainを使う(uv.lockでコミット固定)。
+    # 0.39リリース後はPyPI版に戻してよい
+    "diffusers",
+    "transformers>=5,<6",
+    "accelerate",
+    "safetensors",
+    "omegaconf",
+    "wandb",
+    "rich",
+    "tqdm",
+    "pillow",
+    "numpy",
+    "opencv-python-headless",
+    "pandas",
+    "diffusers-anima ; python_version >= '3.12'",
+]
+
+[dependency-groups]
+dev = []
+
+[tool.uv]
+# アプリケーションとして使う(パッケージビルドしない)
+package = false
+# 実行環境はWSL2/Linuxのみ
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+diffusers = { git = "https://github.com/huggingface/diffusers.git" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+xformers = { index = "pytorch-cu128" }
+diffusers-anima = { git = "https://github.com/hdae/diffusers-anima.git" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
