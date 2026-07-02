@@ -7,7 +7,6 @@ from diffusers import UNet2DConditionModel, AutoencoderKL, AutoencoderKLHunyuanV
 from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel, ZImageDiffusionModel, Flux2KleinDiffusionModel, AnimaDiffusionModel
 from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel, HDMTextModel, ZImageTextModel, Flux2KleinTextModel, AnimaTextModel
 from modules.scheduler import BaseScheduler, FlowScheduler
-from hdm import XUDiTConditionModel
 
 # データローダー用の関数
 def collate_fn(x):
@@ -157,6 +156,13 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
         scheduler = FlowScheduler(shift=math.exp(1.15))
         diffusion = HunyuanVideoDiffusionModel(unet)
     elif model_type == "hdm":
+        try:
+            from hdm import XUDiTConditionModel
+        except ImportError as e:
+            raise ImportError(
+                "HDM support requires the hdm package. Install it in the Python environment used for training."
+            ) from e
+
         if os.path.isfile(path):
             NotImplementedError("from_single_file is not implemented for HDM")
         else:

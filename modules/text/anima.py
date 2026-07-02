@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 from .base import BaseTextModel, BaseTextOutput
-from diffusers_anima.pipelines.anima.text_encoding import prepare_condition_inputs
 
 
 class AnimaTextModel(BaseTextModel):
@@ -19,6 +18,9 @@ class AnimaTextModel(BaseTextModel):
         self.clip_skip = None
 
     def forward(self, prompts):
+        # diffusers_animaはオプショナル依存のため、import失敗でパッケージ全体を壊さないよう使用時に読み込む
+        from diffusers_anima.pipelines.anima.text_encoding import prepare_condition_inputs
+
         prompts = [prompts] if isinstance(prompts, str) else prompts
         device = self.text_encoders[0].device
         dtype = self.dtype

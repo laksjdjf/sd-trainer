@@ -1,7 +1,6 @@
 import torch
 
 from .base import DiffusionModel
-from diffusers_anima.pipelines.anima.text_encoding import build_condition
 
 
 class AnimaDiffusionModel(DiffusionModel):
@@ -10,6 +9,9 @@ class AnimaDiffusionModel(DiffusionModel):
         self.__enable_gradient_checkpointing()
 
     def forward(self, latents, timesteps, text_output, sample=False, size_condition=None, controlnet_hint=None):
+        # diffusers_animaはオプショナル依存のため、import失敗でパッケージ全体を壊さないよう使用時に読み込む
+        from diffusers_anima.pipelines.anima.text_encoding import build_condition
+
         if timesteps.dim() == 0:
             timesteps = timesteps.repeat(latents.size(0))
 
