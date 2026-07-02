@@ -17,16 +17,13 @@ from diffusers import __version__ as diffusers_version
 
 logger = logging.getLogger("トレーナーちゃん")
 
-# 保存先のディレクトリ
+# 保存先のディレクトリ(save_model時に作成する)
 DIRECTORIES = [
     "trained",
     "trained/models",
     "trained/networks",
     "trained/controlnet",
 ]
-
-for directory in DIRECTORIES:
-    os.makedirs(directory, exist_ok=True)
 
 class BaseTrainer:
     def __init__(self, config, model_type, diffusion, text_model, vae:AutoencoderKL, diffusers_scheduler, scheduler, network:NetworkManager, nf4=False, taesd=False):
@@ -58,7 +55,49 @@ class BaseTrainer:
             self.min_t, self.max_t = map(float, config.step_range.split(","))
         else:
             self.min_t, self.max_t = 0.0, None
-            
+
+    def normalize_latents(self, latents):
+        # VAE出力のlatentをモデル入力のスケールに変換する
+        return (latents - self.shift_factor) * self.scaling_factor
+
+    def denormalize_latents(self, latents):
+        # モデル出力のlatentをVAE入力のスケールに戻す(taesdはスケール込みのためそのまま)
+        if self.taesd:
+            return latents
+        return latents / self.scaling_factor + self.shift_factor
+
+    def add_video_dim(self, tensor):
+        # animaのようなvideoモデルでは画像テンソルに時間次元を付与する
+        if self.model_type == "anima" and tensor.dim() == 4:
+            return tensor.unsqueeze(2)
+        return tensor
+
+    def latents_from_batch(self, batch):
+        # キャッシュ済みlatentがあればそれを、なければ画像をVAEでエンコードして正規化して返す
+        if "latents" in batch:
+            latents = self.add_video_dim(batch["latents"].to(self.device))
+        else:
+            with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
+                images = self.add_video_dim(batch["images"].to(self.device))
+                latents = self.vae.encode(images).latent_dist.sample()
+        return self.normalize_latents(latents)
+
+    def text_output_from_batch(self, batch):
+        # キャッシュ済みembeddingがあればそれを、なければキャプションをエンコードして返す
+        if "encoder_hidden_states" in batch:
+            encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
+            pooled_output = batch["pooled_outputs"].to(self.device)
+            return BaseTextOutput(encoder_hidden_states, pooled_output)
+        with torch.autocast("cuda", dtype=self.autocast_dtype):
+            text_output = self.text_model(batch["captions"])
+        return text_output.to(self.device)
+
+    def sample_noise(self, latents):
+        noise = torch.randn_like(latents)
+        if self.config.noise_offset != 0:
+            offset_shape = (noise.shape[0], noise.shape[1]) + (1,) * (noise.dim() - 2)
+            noise += self.config.noise_offset * torch.randn(offset_shape).to(noise)
+        return noise
 
     @torch.no_grad()
     def decode_latents(self, latents):
@@ -284,28 +323,9 @@ class BaseTrainer:
         logger.info(f"学習率スケジューラーは{self.lr_scheduler}にした！")
     
     def loss(self, batch):
-        if "latents" in batch:
-            latents = batch["latents"].to(self.device)
-            if self.model_type == "anima" and len(latents.shape) == 4:
-                latents = latents.unsqueeze(2)
-        else:
-            with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                images = batch['images'].to(self.device)
-                if self.model_type == "anima":
-                    images = images.unsqueeze(2)
-                latents = self.vae.encode(images).latent_dist.sample()
-        latents = (latents - self.shift_factor) * self.scaling_factor
-        
+        latents = self.latents_from_batch(batch)
         self.batch_size = latents.shape[0] # stepメソッドでも使う
-
-        if "encoder_hidden_states" in batch:
-            encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
-            pooled_output = batch["pooled_outputs"].to(self.device)
-            text_output = BaseTextOutput(encoder_hidden_states, pooled_output)
-        else:
-            with torch.autocast("cuda", dtype=self.autocast_dtype):
-                text_output = self.text_model(batch["captions"])
-            text_output = text_output.to(self.device)
+        text_output = self.text_output_from_batch(batch)
 
         if "size_condition" in batch:
             size_condition = batch["size_condition"].to(self.device)
@@ -325,20 +345,16 @@ class BaseTrainer:
             mask = None
 
         timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device, self.min_t, self.max_t)
-        noise = torch.randn_like(latents)
-        if self.config.noise_offset != 0:
-            offset_shape = (noise.shape[0], noise.shape[1]) + (1,) * (len(noise.shape) - 2)
-            noise += self.config.noise_offset * torch.randn(offset_shape).to(noise)
+        noise = self.sample_noise(latents)
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
-        
+
         with torch.autocast("cuda", dtype=self.autocast_dtype):
             model_output = self.diffusion(noisy_latents, timesteps, text_output, sample=False, size_condition=size_condition, controlnet_hint=controlnet_hint)
 
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
 
         if mask is not None:
-            if self.model_type == "anima" and len(mask.shape) == 4:
-                mask = mask.unsqueeze(2)
+            mask = self.add_video_dim(mask)
             model_output = model_output * mask
             target = target * mask
 
@@ -368,95 +384,69 @@ class BaseTrainer:
 
         return logs
     
-    @torch.no_grad()
-    def sample(
-        self, 
-        prompt="", 
-        negative_prompt="",
-        batch_size=1, 
-        height=768, 
-        width=768, 
-        num_inference_steps=30, 
-        guidance_scale=7.0, 
-        denoise=1.0, 
-        seed=4545, 
-        images=None,
-        frames=None,
-        controlnet_hint=None, 
-        all_samples=False,
-        **kwargs
-    ):
-        rng_state = torch.get_rng_state()
-        cuda_rng_state = torch.cuda.get_rng_state()
-        output_images = []
-        
-        if seed is not None:
-            torch.manual_seed(seed)
-            torch.cuda.manual_seed(seed)
-        
+    def _resolve_prompt(self, prompt):
+        # .txtファイルが指定された場合は中身をプロンプトとして読み込む
         if prompt.split(".")[-1] == "txt":
             with open(prompt, "r") as f:
-                prompt = f.read()
-                
-        if negative_prompt.split(".")[-1] == "txt":
-            with open(negative_prompt, "r") as f:
-                negative_prompt = f.read()
+                return f.read()
+        return prompt
 
-        if prompt == self.text_model.prompt and negative_prompt == self.text_model.negative_prompt:
-            use_cache = True
-            positive_output = self.text_model.positive_output.repeat(batch_size)
-            if guidance_scale != 1.0:
-                negative_output = self.text_model.negative_output.repeat(batch_size)
-                text_output = BaseTextOutput.cat([negative_output, positive_output])
-            else:
-                text_output = positive_output
-            text_output = text_output.to(self.device)
-        else:
-            use_cache = False
-
+    def _cached_text_output(self, prompt, negative_prompt, batch_size, guidance_scale):
+        # 検証用にキャッシュ済みのプロンプトならそのtext_outputを返す。なければNone
+        if prompt != self.text_model.prompt or negative_prompt != self.text_model.negative_prompt:
+            return None
+        positive_output = self.text_model.positive_output.repeat(batch_size)
         if guidance_scale != 1.0:
-            prompt = [negative_prompt] * batch_size + [prompt] * batch_size
+            negative_output = self.text_model.negative_output.repeat(batch_size)
+            text_output = BaseTextOutput.cat([negative_output, positive_output])
         else:
-            prompt = [prompt] * batch_size
+            text_output = positive_output
+        return text_output.to(self.device)
 
-        timesteps = self.scheduler.set_timesteps(num_inference_steps, self.device)
-        timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
+    def _encode_sample_prompts(self, prompt, negative_prompt, batch_size, guidance_scale):
+        if guidance_scale != 1.0:
+            prompts = [negative_prompt] * batch_size + [prompt] * batch_size
+        else:
+            prompts = [prompt] * batch_size
 
+        if self.te_device == "cpu":
+            self.text_model.to("cuda")
+        with torch.autocast("cuda", dtype=self.autocast_dtype):
+            text_output = self.text_model(prompts)
+        text_output = text_output.to(self.device)
+        self.text_model.to(self.te_device)
+        return text_output
+
+    def _init_sample_latents(self, batch_size, height, width, frames, images):
         if images is None:
             if self.model_type == "anima":
-                latents = torch.ones(batch_size, self.input_channels, 1, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+                shape = (batch_size, self.input_channels, 1, height // 8, width // 8)
             elif frames is None:
-                latents = torch.ones(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+                shape = (batch_size, self.input_channels, height // 8, width // 8)
             else:
-                latents = torch.ones(batch_size, self.input_channels, (frames + 3) // 4, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+                shape = (batch_size, self.input_channels, (frames + 3) // 4, height // 8, width // 8)
+            latents = torch.ones(shape, device=self.device, dtype=self.autocast_dtype)
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype):
                 latents = self.encode_latents(images)
-            latents.to(dtype=self.autocast_dtype)
-        
-        latents = (latents - self.shift_factor) * self.scaling_factor
+        return self.normalize_latents(latents)
 
-        noise = torch.randn_like(latents)
-        latents = self.scheduler.add_noise(latents, noise, timesteps[0])
-        if not use_cache:
-            if self.te_device == "cpu":
-                self.text_model.to("cuda")
-            with torch.autocast("cuda", dtype=self.autocast_dtype):
-                text_output = self.text_model(prompt)
-            text_output = text_output.to(self.device)
-            self.text_model.to(self.te_device)
+    def _prepare_sample_controlnet_hint(self, controlnet_hint, guidance_scale):
+        if controlnet_hint is None:
+            return None
+        if isinstance(controlnet_hint, str):
+            controlnet_hint = Image.open(controlnet_hint).convert("RGB")
+            controlnet_hint = transforms.ToTensor()(controlnet_hint).unsqueeze(0)
+        controlnet_hint = controlnet_hint.to(self.device)
+        if guidance_scale != 1.0:
+            controlnet_hint = torch.cat([controlnet_hint] * 2)
 
-        if controlnet_hint is not None:
-            if isinstance(controlnet_hint, str):
-                controlnet_hint = Image.open(controlnet_hint).convert("RGB")
-                controlnet_hint = transforms.ToTensor()(controlnet_hint).unsqueeze(0)
-            controlnet_hint = controlnet_hint.to(self.device)
-            if guidance_scale != 1.0:
-                controlnet_hint = torch.cat([controlnet_hint] *2)
-            
-            if hasattr(self.network, "set_controlnet_hint"):
-                self.network.set_controlnet_hint(controlnet_hint)
+        if hasattr(self.network, "set_controlnet_hint"):
+            self.network.set_controlnet_hint(controlnet_hint)
+        return controlnet_hint
 
+    def _denoising_loop(self, latents, timesteps, text_output, guidance_scale, controlnet_hint, all_samples):
+        output_images = []
         progress_bar = tqdm(timesteps, desc="Sampling", leave=False, total=len(timesteps))
 
         for i, t in enumerate(timesteps):
@@ -467,30 +457,73 @@ class BaseTrainer:
             if guidance_scale != 1.0:
                 uncond, cond = model_output.chunk(2)
                 model_output = uncond + guidance_scale * (cond - uncond)
-            
+
             if i+1 < len(timesteps):
                 latents = self.scheduler.step(latents, model_output, t, timesteps[i+1])
                 if all_samples:
                     latents_prev = self.scheduler.pred_original_sample(latents, model_output, t)
-                    if not self.taesd:
-                        latents_prev = latents_prev / self.scaling_factor + self.shift_factor
-                    output_images.extend(self.decode_latents(latents_prev))
+                    output_images.extend(self.decode_latents(self.denormalize_latents(latents_prev)))
             else:
                 latents = self.scheduler.pred_original_sample(latents, model_output, t)
             progress_bar.update(1)
 
         with torch.autocast("cuda", dtype=self.vae_dtype):
-            if not self.taesd:
-                latents = latents / self.scaling_factor + self.shift_factor
-            output_images.extend(self.decode_latents(latents))
-        
+            output_images.extend(self.decode_latents(self.denormalize_latents(latents)))
+
+        return output_images
+
+    @torch.no_grad()
+    def sample(
+        self,
+        prompt="",
+        negative_prompt="",
+        batch_size=1,
+        height=768,
+        width=768,
+        num_inference_steps=30,
+        guidance_scale=7.0,
+        denoise=1.0,
+        seed=4545,
+        images=None,
+        frames=None,
+        controlnet_hint=None,
+        all_samples=False,
+        **kwargs
+    ):
+        rng_state = torch.get_rng_state()
+        cuda_rng_state = torch.cuda.get_rng_state()
+
+        if seed is not None:
+            torch.manual_seed(seed)
+            torch.cuda.manual_seed(seed)
+
+        prompt = self._resolve_prompt(prompt)
+        negative_prompt = self._resolve_prompt(negative_prompt)
+        text_output = self._cached_text_output(prompt, negative_prompt, batch_size, guidance_scale)
+
+        timesteps = self.scheduler.set_timesteps(num_inference_steps, self.device)
+        timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
+
+        latents = self._init_sample_latents(batch_size, height, width, frames, images)
+        noise = torch.randn_like(latents)
+        latents = self.scheduler.add_noise(latents, noise, timesteps[0])
+
+        if text_output is None:
+            text_output = self._encode_sample_prompts(prompt, negative_prompt, batch_size, guidance_scale)
+
+        controlnet_hint = self._prepare_sample_controlnet_hint(controlnet_hint, guidance_scale)
+
+        output_images = self._denoising_loop(latents, timesteps, text_output, guidance_scale, controlnet_hint, all_samples)
+
         torch.set_rng_state(rng_state)
         torch.cuda.set_rng_state(cuda_rng_state)
-        
+
         return output_images
     
     def save_model(self, output_path):
         logger.info(f"モデルを保存します！")
+        for directory in DIRECTORIES:
+            os.makedirs(directory, exist_ok=True)
         if self.config.train_unet or self.config.train_text_encoder:
             self.save_pretrained(os.path.join("trained/models", output_path))
         if self.network_train:

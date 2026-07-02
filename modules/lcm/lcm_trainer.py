@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from modules.trainer import BaseTrainer
-from modules.text import BaseTextOutput
 from modules.scheduler import BaseScheduler, substitution_t
 
 # additional config
@@ -54,22 +53,9 @@ class LCMTrainer(BaseTrainer):
         self.text_model.to(self.te_device)
 
     def loss(self, batch):
-        if "latents" in batch:
-            latents = batch["latents"].to(self.device)
-        else:
-            with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
-        latents = (latents - self.shift_factor) * self.scaling_factor
-        
+        latents = self.latents_from_batch(batch)
         self.batch_size = latents.shape[0] # stepメソッドでも使う
-
-        if "encoder_hidden_states" in batch:
-            encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
-            pooled_output = batch["pooled_outputs"].to(self.device)
-            text_output = BaseTextOutput(encoder_hidden_states, pooled_output)
-        else:
-            with torch.autocast("cuda", dtype=self.autocast_dtype):
-                text_output = self.text_model(batch["captions"])
+        text_output = self.text_output_from_batch(batch)
 
         if "size_condition" in batch:
             size_condition = batch["size_condition"].to(self.device)

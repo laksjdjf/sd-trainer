@@ -1,5 +1,4 @@
 import torch
-from modules.text import BaseTextOutput
 from modules.trainer import BaseTrainer
 
 class VPredTrainer(BaseTrainer):
@@ -7,24 +6,11 @@ class VPredTrainer(BaseTrainer):
         super().__init__(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4, taesd)
         self.scheduler.v_prediction = True
         self.scheduler.zsnr = True
-    
-    def loss(self, batch):
-        if "latents" in batch:
-            latents = batch["latents"].to(self.device)
-        else:
-            with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
-        latents = (latents - self.shift_factor) * self.scaling_factor
-        
-        self.batch_size = latents.shape[0] # stepメソッドでも使う
 
-        if "encoder_hidden_states" in batch:
-            encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
-            pooled_output = batch["pooled_outputs"].to(self.device)
-            text_output = BaseTextOutput(encoder_hidden_states, pooled_output)
-        else:
-            with torch.autocast("cuda", dtype=self.autocast_dtype):
-                text_output = self.text_model(batch["captions"])
+    def loss(self, batch):
+        latents = self.latents_from_batch(batch)
+        self.batch_size = latents.shape[0] # stepメソッドでも使う
+        text_output = self.text_output_from_batch(batch)
 
         if "size_condition" in batch:
             size_condition = batch["size_condition"].to(self.device)
@@ -32,9 +18,7 @@ class VPredTrainer(BaseTrainer):
             size_condition = None
 
         timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device)
-        noise = torch.randn_like(latents)
-        if self.config.noise_offset != 0:
-            noise += self.config.noise_offset * torch.randn(noise.shape[0], noise.shape[1], 1, 1).to(noise)
+        noise = self.sample_noise(latents)
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
         
         with torch.autocast("cuda", dtype=self.autocast_dtype):
