@@ -1,3 +1,6 @@
+import os
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from omegaconf import OmegaConf
 import sys
 import math

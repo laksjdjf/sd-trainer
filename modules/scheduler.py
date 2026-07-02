@@ -105,20 +105,31 @@ class FlowScheduler:
         self.shift = shift
         return
 
+    def apply_shift(self, timesteps):
+        return (timesteps * self.shift) / (1 + (self.shift - 1) * timesteps)
+
     def set_timesteps(self, num_inference_steps, device="cuda"):
         self.num_inference_steps = num_inference_steps
         timesteps = torch.linspace(0, 1, num_inference_steps+1, dtype=float)
         timesteps = timesteps.flip(0)[:-1]
-        timesteps = (timesteps * self.shift) / (1 + (self.shift - 1) * timesteps)
+        timesteps = self.apply_shift(timesteps)
         timesteps *= 1000
         return timesteps.to(device)
     
     def sample_timesteps(self, batch_size, device="cuda", min_t=0, max_t=None):
-        if min_t != 0 or max_t is not None:
-            raise ValueError("min_t and max_t are not supported in FlowScheduler")
-        logits_norm = torch.randn(batch_size, device=device)
-        timesteps = logits_norm.sigmoid()
-        timesteps = (timesteps * self.shift) / (1 + (self.shift - 1) * timesteps)
+        min_t = float(min_t or 0.0)
+        max_t = float(max_t) if max_t is not None else 1.0
+        if min_t < 0 or max_t > 1 or min_t >= max_t:
+            raise ValueError("min_t/max_t must satisfy 0 <= min_t < max_t <= 1")
+
+        timesteps = []
+        while sum(t.numel() for t in timesteps) < batch_size:
+            logits_norm = torch.randn(batch_size * 2, device=device)
+            samples = self.apply_shift(logits_norm.sigmoid())
+            samples = samples[(samples >= min_t) & (samples < max_t)]
+            if samples.numel() > 0:
+                timesteps.append(samples)
+        timesteps = torch.cat(timesteps)[:batch_size]
         return timesteps * 1000
 
     # x0 -> xt    

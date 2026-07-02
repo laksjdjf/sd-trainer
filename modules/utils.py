@@ -4,8 +4,8 @@ from safetensors.torch import load_file, save_file
 import torch
 import math
 from diffusers import UNet2DConditionModel, AutoencoderKL, AutoencoderKLHunyuanVideo, StableDiffusionPipeline, DDPMScheduler, StableDiffusionXLPipeline, SD3Transformer2DModel, FluxTransformer2DModel, AuraFlowTransformer2DModel, HunyuanVideoTransformer3DModel, AutoencoderTiny, Lumina2Transformer2DModel, ZImageTransformer2DModel, Flux2Transformer2DModel, AutoencoderKLFlux2
-from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel, ZImageDiffusionModel, Flux2KleinDiffusionModel
-from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel, HDMTextModel, ZImageTextModel, Flux2KleinTextModel
+from modules.diffusion_model import DiffusionModel, SD3DiffusionModel, FluxDiffusionModel, AuraFlowDiffusionModel, HunyuanVideoDiffusionModel, Lumina2DiffusionModel, HDMDiffusionModel, ZImageDiffusionModel, Flux2KleinDiffusionModel, AnimaDiffusionModel
+from modules.text_model import SD1TextModel, SDXLTextModel, SD3TextModel, FluxTextModel, AuraFlowTextModel, HunyuanVideoTextModel, Lumina2TextModel, HDMTextModel, ZImageTextModel, Flux2KleinTextModel, AnimaTextModel
 from modules.scheduler import BaseScheduler, FlowScheduler
 from hdm import XUDiTConditionModel
 
@@ -34,7 +34,6 @@ def get_attr_from_config(config_text: str):
     module = ".".join(config_text.split(".")[:-1])
     attr = config_text.split(".")[-1]
     return getattr(importlib.import_module(module), attr)
-
 
 def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=None, variant=None, nf4=False, taesd=False):
 
@@ -172,8 +171,7 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             NotImplementedError("from_single_file is not implemented for HunyuanVideo")
         else:
             text_model = ZImageTextModel.from_pretrained(path, revision=revision, torch_dtype=torch_dtype, variant=variant)
-            #unet = ZImageTransformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
-            unet = ZImageTransformer2DModel.from_pretrained("ostris/Z-Image-De-Turbo", subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
+            unet = ZImageTransformer2DModel.from_pretrained(path, subfolder='transformer', revision=revision, torch_dtype=torch_dtype, variant=variant, quantization_config=nf4_config)
             vae = AutoencoderKL.from_pretrained(path, subfolder='vae', revision=revision, torch_dtype=torch_dtype, variant=variant)
             diffusers_scheduler = None
         scheduler = FlowScheduler(shift=math.exp(1.15))
@@ -188,6 +186,35 @@ def load_model(path, model_type="sd1", clip_skip=-1, revision=None, torch_dtype=
             diffusers_scheduler = None
         scheduler = FlowScheduler(shift=math.exp(1.15))
         diffusion = Flux2KleinDiffusionModel(unet)
+    elif model_type == "anima":
+        try:
+            from diffusers_anima import AnimaPipeline
+        except ImportError as e:
+            raise ImportError(
+                "Anima support requires diffusers-anima. Install it in the Python environment used for training."
+            ) from e
+
+        if os.path.isfile(path):
+            pipe = AnimaPipeline.from_single_file(path, torch_dtype=torch_dtype)
+        else:
+            pipe = AnimaPipeline.from_pretrained(
+                path,
+                revision=revision,
+                torch_dtype=torch_dtype,
+                variant=variant,
+            )
+        if pipe.prompt_tokenizer is None:
+            raise RuntimeError("AnimaPipeline did not initialize prompt_tokenizer.")
+        text_model = AnimaTextModel(
+            prompt_tokenizer=pipe.prompt_tokenizer,
+            text_encoder=pipe.text_encoder,
+        )
+        vae = pipe.vae
+        unet = pipe.transformer
+        diffusers_scheduler = pipe.scheduler
+        scheduler = FlowScheduler(shift=getattr(diffusers_scheduler.config, "shift", 3.0))
+        diffusion = AnimaDiffusionModel(unet)
+        del pipe
 
 
     text_model.clip_skip = clip_skip

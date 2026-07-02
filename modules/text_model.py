@@ -12,6 +12,7 @@ from .text import (
     Lumina2TextModel,
     HDMTextModel,
     ZImageTextModel,
+    AnimaTextModel,
 )
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "Lumina2TextModel",
     "HDMTextModel",
     "ZImageTextModel",
+    "AnimaTextModel",
 ]
     

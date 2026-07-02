@@ -5,3 +5,4 @@ wandb
 transformers
 omegaconf
 safetensors
+diffusers-anima @ git+https://github.com/hdae/diffusers-anima.git ; python_version >= "3.12"

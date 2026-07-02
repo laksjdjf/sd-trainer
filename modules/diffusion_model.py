@@ -9,6 +9,7 @@ from .diffusion import (
     Lumina2DiffusionModel,
     HDMDiffusionModel,
     ZImageDiffusionModel,
+    AnimaDiffusionModel,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "Lumina2DiffusionModel",
     "HDMDiffusionModel",
     "ZImageDiffusionModel",
+    "AnimaDiffusionModel",
 ]

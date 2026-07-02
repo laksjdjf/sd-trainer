@@ -72,6 +72,10 @@ class BaseTrainer:
             self.scaling_factor = 1 / torch.sqrt(vae.bn.running_var.view(1, -1, 4, 1, 1).mean(dim=2) + 1e-4)
             self.shift_factor = vae.bn.running_mean.view(1, -1, 4, 1, 1).mean(dim=2)
             self.input_channels = 32
+        elif model_type == "anima":
+            self.scaling_factor = 1 / torch.tensor(vae.config.latents_std)[None, :, None, None, None]
+            self.shift_factor = torch.tensor(vae.config.latents_mean)[None, :, None, None, None]
+            self.input_channels = 16
         
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
@@ -95,7 +99,9 @@ class BaseTrainer:
         
         for i in range(latents.shape[0]):
             latent = latents[i].unsqueeze(0).to(self.vae_dtype)
-            if len(latent.shape) == 4:
+            if self.model_type == "anima":
+                image = self.vae.decode(latent, return_dict=False)[0]
+            elif len(latent.shape) == 4:
                 image = self.vae.decode(latent).sample
             else:
                 image = self.vae.tiled_decode(latent).sample
@@ -104,6 +110,9 @@ class BaseTrainer:
         images = (images / 2 + 0.5).clamp(0, 1)
 
         self.vae.to(self.vae.device)
+
+        if self.model_type == "anima" and len(images.shape) == 5:
+            images = images[:, :, 0]
 
         if len(images.shape) == 5:
             videos = []
@@ -130,8 +139,12 @@ class BaseTrainer:
         )
         if isinstance(images[0], list):
             images = torch.stack([[to_tensor_norm(image) for image in video] for video in images]).to(self.vae.device, dtype=self.vae_dtype)
+            if self.model_type == "anima":
+                images = images.permute(0, 2, 1, 3, 4)
         else:
             images = torch.stack([to_tensor_norm(image) for image in images]).to(self.vae.device, dtype=self.vae_dtype)
+            if self.model_type == "anima":
+                images = images.unsqueeze(2)
         if not self.taesd:
             latents = self.vae.encode(images).latent_dist.sample()
         else:
@@ -305,9 +318,14 @@ class BaseTrainer:
     def loss(self, batch):
         if "latents" in batch:
             latents = batch["latents"].to(self.device)
+            if self.model_type == "anima" and len(latents.shape) == 4:
+                latents = latents.unsqueeze(2)
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                latents = self.vae.encode(batch['images'].to(self.device)).latent_dist.sample()
+                images = batch['images'].to(self.device)
+                if self.model_type == "anima":
+                    images = images.unsqueeze(2)
+                latents = self.vae.encode(images).latent_dist.sample()
         latents = (latents - self.shift_factor) * self.scaling_factor
         
         self.batch_size = latents.shape[0] # stepメソッドでも使う
@@ -341,7 +359,8 @@ class BaseTrainer:
         timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device, self.min_t, self.max_t)
         noise = torch.randn_like(latents)
         if self.config.noise_offset != 0:
-            noise += self.config.noise_offset * torch.randn(noise.shape[0], noise.shape[1], 1, 1).to(noise)
+            offset_shape = (noise.shape[0], noise.shape[1]) + (1,) * (len(noise.shape) - 2)
+            noise += self.config.noise_offset * torch.randn(offset_shape).to(noise)
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
         
         with torch.autocast("cuda", dtype=self.autocast_dtype):
@@ -350,6 +369,8 @@ class BaseTrainer:
         target = self.scheduler.get_target(latents, noise, timesteps) # v_predictionの場合はvelocityになる
 
         if mask is not None:
+            if self.model_type == "anima" and len(mask.shape) == 4:
+                mask = mask.unsqueeze(2)
             model_output = model_output * mask
             target = target * mask
 
@@ -434,7 +455,9 @@ class BaseTrainer:
         timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
 
         if images is None:
-            if frames is None:
+            if self.model_type == "anima":
+                latents = torch.ones(batch_size, self.input_channels, 1, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
+            elif frames is None:
                 latents = torch.ones(batch_size, self.input_channels, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)
             else:
                 latents = torch.ones(batch_size, self.input_channels, (frames + 3) // 4, height // 8, width // 8, device=self.device, dtype=self.autocast_dtype)

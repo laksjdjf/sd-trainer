@@ -2,7 +2,7 @@ import os
 import numpy as np
 import torch
 from torchvision import transforms
-from diffusers import AutoencoderKL, AutoencoderKLFlux2
+from diffusers import AutoencoderKL
 from tqdm import tqdm
 import argparse
 from PIL import Image, PngImagePlugin
@@ -63,7 +63,7 @@ def main():
 
 
 def main_batch():
-    vae = AutoencoderKLFlux2.from_pretrained(args.model, subfolder="vae")
+    vae = AutoencoderKL.from_pretrained(args.model, subfolder="vae")
     vae.eval()
     vae.to("cuda", dtype=dtype)
 
@@ -87,7 +87,7 @@ def main_batch():
         for file in tqdm(buckets[key]):
             if file in exist_files:
                 continue
-            image = Image.open(path + file + ".png")
+            image = Image.open(path + file + ".png").convert("RGB")
             image_tensor = to_tensor_norm(image).to("cuda", dtype)
             image_tensors.append(image_tensor)
             files.append(file)
