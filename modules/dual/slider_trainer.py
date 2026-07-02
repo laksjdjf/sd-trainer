@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional
 from modules.trainer import BaseTrainer
-from modules.text_model import BaseTextOutput
+from modules.text import BaseTextOutput
 
 class ADDifTTrainer(BaseTrainer):
     def loss(self, batch):

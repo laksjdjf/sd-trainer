@@ -1,5 +1,5 @@
 import torch
-from modules.text_model import BaseTextOutput
+from modules.text import BaseTextOutput
 from modules.trainer import BaseTrainer
 
 class VPredTrainer(BaseTrainer):

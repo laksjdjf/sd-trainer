@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from modules.trainer import BaseTrainer
-from modules.text_model import BaseTextOutput
+from modules.text import BaseTextOutput
 from modules.scheduler import BaseScheduler, substitution_t
 
 # additional config

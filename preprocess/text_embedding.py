@@ -8,7 +8,7 @@ import os
 import numpy as np
 import sys
 sys.path.insert(0, './') # あまり賢くないが、sd-trainer直下で実行する
-from modules.text_model import SD1TextModel, SDXLTextModel, FluxTextModel
+from modules.text import SD1TextModel, SDXLTextModel, FluxTextModel
 
 args = ArgumentParser()
 args.add_argument('--model_path', '-m', type=str, required=True)

@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 from torchvision import transforms
-from modules.text_model import BaseTextOutput
+from modules.text import BaseTextOutput
 from modules.utils import get_attr_from_config, load_model
+from modules.model_registry import get_model_spec
 from networks.manager import NetworkManager
 from tqdm import tqdm
 from diffusers import AutoencoderKL
@@ -40,43 +41,10 @@ class BaseTrainer:
         self.nf4 = nf4
         self.taesd = taesd
 
-        if model_type == "sd1":
-            self.scaling_factor =  0.18215
-            self.shift_factor = 0
-            self.input_channels = 4
-        elif model_type in ["sdxl", "auraflow"]:
-            self.scaling_factor = 0.13025
-            self.shift_factor = 0
-            self.input_channels = 4
-        elif model_type == "sd3":
-            self.scaling_factor = 1.5305
-            self.shift_factor = 0.0609
-            self.input_channels = 16
-        elif model_type in ["flux", "lumina2"]:
-            self.scaling_factor = 0.3611
-            self.shift_factor = 0.1159
-            self.input_channels = 16
-        elif model_type == "hunyuan_video":
-            self.scaling_factor = 0.476986
-            self.shift_factor = 0
-            self.input_channels = 16
-        elif model_type == "hdm":
-            self.scaling_factor = 1 / torch.tensor(vae.config.latents_std)[None, :, None, None]
-            self.shift_factor = torch.tensor(vae.config.latents_mean)[None, :, None, None]
-            self.input_channels = 4
-        elif model_type == "zimage":
-            self.scaling_factor = 0.3611
-            self.shift_factor = 0.1159
-            self.input_channels = 16
-        elif model_type == "flux2_klein":
-            self.scaling_factor = 1 / torch.sqrt(vae.bn.running_var.view(1, -1, 4, 1, 1).mean(dim=2) + 1e-4)
-            self.shift_factor = vae.bn.running_mean.view(1, -1, 4, 1, 1).mean(dim=2)
-            self.input_channels = 32
-        elif model_type == "anima":
-            self.scaling_factor = 1 / torch.tensor(vae.config.latents_std)[None, :, None, None, None]
-            self.shift_factor = torch.tensor(vae.config.latents_mean)[None, :, None, None, None]
-            self.input_channels = 16
-        
+        spec = get_model_spec(model_type)
+        self.scaling_factor, self.shift_factor = spec.latent_stats(vae)
+        self.input_channels = spec.input_channels
+
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
                 NetworkManager(
@@ -541,7 +509,7 @@ class BaseTrainer:
         return images
 
     def save_pretrained(self, save_directory):
-        if self.model_type not in ["sd1", "sdxl"]:
+        if not get_model_spec(self.model_type).supports_save_pretrained:
             raise NotImplementedError(f"{self.model_type}は未対応だよ！")
         self.diffusion.unet.save_pretrained(os.path.join(save_directory, "unet"))
         self.vae.save_pretrained(os.path.join(save_directory, "vae"))
@@ -570,6 +538,6 @@ class BaseTrainer:
     @classmethod
     def from_pretrained(cls, path, model_type, clip_skip=None, config=None, network=None, revision=None, torch_dtype=None, variant=None, nf4=False, taesd=False):
         if clip_skip is None:
-            clip_skip = -2 if model_type in ["sdxl", "lumina2", "zimage"] else -3 if model_type == "hunyuan_video" else -1
+            clip_skip = get_model_spec(model_type).default_clip_skip
         text_model, vae, diffusion, diffusers_scheduler, scheduler = load_model(path, model_type, clip_skip, revision, torch_dtype, variant, nf4, taesd)
         return cls(config, model_type, diffusion, text_model, vae, diffusers_scheduler, scheduler, network, nf4, taesd)

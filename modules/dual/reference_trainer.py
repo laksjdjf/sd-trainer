@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from modules.trainer import BaseTrainer
-from modules.text_model import BaseTextOutput
+from modules.text import BaseTextOutput
 from diffusers.models.attention_processor import AttnProcessor2_0
 
 class ReferenceAttentionProcessor(AttnProcessor2_0):
