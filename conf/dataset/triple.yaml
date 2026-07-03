@@ -1,0 +1,6 @@
+# @package _global_
+dataset:
+  module: modules.dual.dual_dataset.TripleDataset
+  args:
+    batch_size: 1
+    ucg: 0.0

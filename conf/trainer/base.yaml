@@ -1,0 +1,3 @@
+# @package _global_
+trainer:
+  module: modules.trainer.BaseTrainer

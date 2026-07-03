@@ -1,0 +1,4 @@
+# @package _global_
+main:
+  model_type: sd3
+  model_path: stabilityai/stable-diffusion-3-medium-diffusers

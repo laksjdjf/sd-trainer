@@ -41,10 +41,15 @@ wheels/
 *.log
 tea_debug.log
 
-# Config files (except example)
-config/*.yaml
-!config/example.yaml
-conf/
+# 旧形式config(Hydra移行済み、残骸用)
+config/
+
+# 個人実験config(exampleのみ共有)
+conf/experiment/*.yaml
+!conf/experiment/example.yaml
+
+# Hydra実行ログ(解決済みconfigの記録)
+/outputs/
 
 # Data and models
 /data/

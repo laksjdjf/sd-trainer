@@ -1,0 +1,6 @@
+# @package _global_
+dataset:
+  module: modules.dataset.BaseDataset
+  args:
+    batch_size: 1
+    ucg: 0.1

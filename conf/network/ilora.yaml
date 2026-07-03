@@ -1,0 +1,8 @@
+# @package _global_
+network:
+  train: true
+  args:
+    module: networks.ilora.iLoRAModule
+    module_args:
+      rank: 1
+      forward_mode: sequential

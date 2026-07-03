@@ -1,0 +1,4 @@
+# @package _global_
+main:
+  model_type: sdxl
+  model_path: ../ComfyUI/models/checkpoints/Illustrious-XL-v1.1.safetensors

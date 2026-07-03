@@ -1,0 +1,4 @@
+# @package _global_
+main:
+  model_type: zimage
+  model_path: Tongyi-MAI/Z-Image-Turbo

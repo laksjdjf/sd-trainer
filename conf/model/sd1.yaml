@@ -1,0 +1,5 @@
+# @package _global_
+main:
+  model_type: sd1
+  model_path: waifu-diffusion/wd-1-5-beta3
+  torch_dtype: null

@@ -1,0 +1,10 @@
+# @package _global_
+network:
+  train: true
+  args:
+    module: networks.lora.LoRAModule
+    module_args:
+      rank: 4
+      forward_mode: sequential
+    conv_module_args:
+      same: true

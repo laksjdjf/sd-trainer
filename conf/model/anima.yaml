@@ -1,0 +1,4 @@
+# @package _global_
+main:
+  model_type: anima
+  model_path: ../ComfyUI/models/diffusion_models/anima-base-v1.0.safetensors

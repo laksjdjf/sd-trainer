@@ -1,0 +1,29 @@
+# @package _global_
+# 実験configの見本。グループ(model/trainer/dataset/network)との差分だけを書く
+defaults:
+  - override /model: sdxl
+  - override /trainer: base
+  - override /dataset: base
+  - override /network: lora
+
+main:
+  model_path: cagliostrolab/animagine-xl-3.0
+  epochs: 5
+
+trainer:
+  gradient_checkpointing: true
+  validation_num_samples: 4
+  validation_args:
+    prompt: "1girl, solo"
+    negative_prompt: "lowres, bad anatomy, bad hands, worst quality"
+
+dataset:
+  args:
+    path: dataset
+    metadata: buckets.json
+    original_size: original_size.json
+
+network:
+  args:
+    conv_module_args:
+      rank: 4

@@ -1,0 +1,54 @@
+# _self_(このファイルの共通デフォルト)を先に置き、グループ→experimentの順に上書きする
+defaults:
+  - base_schema
+  - _self_
+  - model: sdxl
+  - trainer: base
+  - dataset: base
+  - network: lora
+  - experiment: null
+  - override hydra/job_logging: none
+  - override hydra/hydra_logging: none
+
+# 全実験共通のデフォルト。実験ごとの差分は conf/experiment/*.yaml か
+# CLIオーバーライド(例: trainer.lr=1e-4)で指定する
+main:
+  output_path: output
+  seed: 4545
+  torch_dtype: torch.bfloat16
+  log_level: logging.INFO
+  wandb: sd-trainer
+
+trainer:
+  train_unet: false
+  train_text_encoder: false
+  te_device: cuda
+  vae_device: cuda
+  train_dtype: torch.float32
+  weight_dtype: torch.bfloat16
+  autocast_dtype: torch.bfloat16
+  vae_dtype: torch.bfloat16
+  lr: "1e-3"
+  lr_scheduler: cosine
+  validation_num_samples: 2
+  validation_seed: 4545
+  validation_args:
+    prompt: data/blonde_twin.txt
+    negative_prompt: data/negative.txt
+    width: 832
+    height: 1216
+    guidance_scale: 7.0
+
+dataloader:
+  module: torch.utils.data.DataLoader
+  args:
+    num_workers: 4
+    shuffle: true
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/multirun/${now:%Y-%m-%d_%H-%M-%S}

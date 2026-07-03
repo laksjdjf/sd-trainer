@@ -1,0 +1,4 @@
+# @package _global_
+main:
+  model_type: lumina2
+  model_path: neta-lumina

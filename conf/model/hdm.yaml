@@ -1,0 +1,4 @@
+# @package _global_
+main:
+  model_type: hdm
+  model_path: KBlueLeaf/HDM-xut-340M-anime

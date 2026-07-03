@@ -1,0 +1,4 @@
+# @package _global_
+main:
+  model_type: flux2_klein
+  model_path: black-forest-labs/FLUX.2-klein-base-4B
