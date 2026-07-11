@@ -44,6 +44,7 @@ class TrainerConfig:
     noise_offset: float = 0.0
     step_range : Optional[str] = None
     gradient_checkpointing: bool = False
+    convrot: Optional[str] = None  # None | "forward"(int8+ConvRot fwd) | "backward"(fwd+bwd)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     merging_loras: Optional[List[str]] = None
     validation_num_samples: int = 4

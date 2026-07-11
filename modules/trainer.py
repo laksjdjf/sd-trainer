@@ -227,6 +227,16 @@ class BaseTrainer:
         self.text_model.requires_grad_(config.train_text_encoder)
         self.vae.eval()
 
+        convrot = getattr(config, "convrot", None)
+        if convrot:
+            if convrot not in ("forward", "backward"):
+                raise ValueError(f"convrot={convrot}は未対応。forward か backward にしてね。")
+            if config.train_unet:
+                raise ValueError("convrotはベース凍結(LoRA学習)専用だよ。train_unet=Falseにしてね。")
+            from modules.quant import quantize_unet_int8_convrot
+            quantize_unet_int8_convrot(self.diffusion.unet, int8_backward=(convrot == "backward"))
+            torch.cuda.empty_cache()
+
         if isinstance(self.scaling_factor, torch.Tensor):
             self.scaling_factor = self.scaling_factor.to(device)
             self.shift_factor = self.shift_factor.to(device)
