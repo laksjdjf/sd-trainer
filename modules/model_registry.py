@@ -2,7 +2,7 @@
 #
 # 各モデルタイプに対して「どうロードするか」「latentの統計量」「保存対応の有無」等を
 # ModelSpec としてまとめ、modules/utils.py (load_model) や modules/trainer.py から
-# 参照する。オプショナル依存 (hdm パッケージ, diffusers-anima) は該当ローダー関数の
+# 参照する。オプショナル依存 (hdm パッケージ) は該当ローダー関数の
 # 内部で遅延importし、ここでは必須依存 (diffusers / modules.diffusion / modules.text /
 # modules.scheduler) のみをトップレベルでimportする。
 # modules.utils とは循環importになるため参照しない (get_attr_from_config は使わない)。
@@ -13,12 +13,16 @@ from typing import Callable
 
 import torch
 from diffusers import (
+    AnimaTextConditioner,
     AuraFlowTransformer2DModel,
     AutoencoderKL,
     AutoencoderKLFlux2,
     AutoencoderKLHunyuanVideo,
+    AutoencoderKLQwenImage,
     AutoencoderTiny,
+    CosmosTransformer3DModel,
     DDPMScheduler,
+    FlowMatchEulerDiscreteScheduler,
     Flux2Transformer2DModel,
     FluxTransformer2DModel,
     HunyuanVideoTransformer3DModel,
@@ -29,6 +33,7 @@ from diffusers import (
     UNet2DConditionModel,
     ZImageTransformer2DModel,
 )
+from transformers import Qwen2Tokenizer, Qwen3Model, T5Tokenizer
 
 from modules.diffusion import (
     AnimaDiffusionModel,
@@ -224,38 +229,43 @@ def _load_standard(spec, path, clip_skip, revision, torch_dtype, variant, nf4_co
 
 
 # ---------------------------------------------------------------------------
-# ローダー: anima (AnimaPipeline 経由)
+# ローダー: anima (公式Diffusers形式の各コンポーネントを直接ロード)
 # ---------------------------------------------------------------------------
 
 def _load_anima(spec, path, clip_skip, revision, torch_dtype, variant, nf4_config, taesd):
-    try:
-        from diffusers_anima import AnimaPipeline
-    except ImportError as e:
-        raise ImportError(
-            "Anima support requires diffusers-anima. Install it in the Python environment used for training."
-        ) from e
-
     if os.path.isfile(path):
-        pipe = AnimaPipeline.from_single_file(path, torch_dtype=torch_dtype)
-    else:
-        pipe = AnimaPipeline.from_pretrained(
-            path,
-            revision=revision,
-            torch_dtype=torch_dtype,
-            variant=variant,
+        raise ValueError(
+            "Official Diffusers Anima support requires a Diffusers-format model directory or Hub repository; "
+            "single-file checkpoints are not supported."
         )
-    if pipe.prompt_tokenizer is None:
-        raise RuntimeError("AnimaPipeline did not initialize prompt_tokenizer.")
-    text_model = AnimaTextModel(
-        prompt_tokenizer=pipe.prompt_tokenizer,
-        text_encoder=pipe.text_encoder,
+
+    model_kwargs = {
+        "revision": revision,
+        "torch_dtype": torch_dtype,
+        "variant": variant,
+    }
+    tokenizer_kwargs = {"revision": revision}
+
+    tokenizer = Qwen2Tokenizer.from_pretrained(path, subfolder="tokenizer", **tokenizer_kwargs)
+    t5_tokenizer = T5Tokenizer.from_pretrained(path, subfolder="t5_tokenizer", **tokenizer_kwargs)
+    text_encoder = Qwen3Model.from_pretrained(path, subfolder="text_encoder", **model_kwargs)
+    text_conditioner = AnimaTextConditioner.from_pretrained(path, subfolder="text_conditioner", **model_kwargs)
+    unet = CosmosTransformer3DModel.from_pretrained(path, subfolder="transformer", **model_kwargs)
+    vae = AutoencoderKLQwenImage.from_pretrained(path, subfolder="vae", **model_kwargs)
+    diffusers_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        path,
+        subfolder="scheduler",
+        revision=revision,
     )
-    vae = pipe.vae
-    unet = pipe.transformer
-    diffusers_scheduler = pipe.scheduler
+
+    text_model = AnimaTextModel(
+        tokenizer=tokenizer,
+        t5_tokenizer=t5_tokenizer,
+        text_encoder=text_encoder,
+        text_conditioner=text_conditioner,
+    )
     scheduler = FlowScheduler(shift=getattr(diffusers_scheduler.config, "shift", 3.0))
     diffusion = AnimaDiffusionModel(unet)
-    del pipe
     return text_model, vae, diffusion, diffusers_scheduler, scheduler
 
 

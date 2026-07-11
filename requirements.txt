@@ -9,4 +9,5 @@ wandb
 omegaconf
 safetensors
 rich
-diffusers-anima @ git+https://github.com/hdae/diffusers-anima.git ; python_version >= "3.12"
+sentencepiece
+comfy-kitchen

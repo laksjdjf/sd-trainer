@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 import torch
-from diffusers_anima import AnimaPipeline
+from diffusers import AutoencoderKLQwenImage
 from PIL import Image
 from torchvision import transforms
 from tqdm import tqdm
@@ -37,13 +37,13 @@ def check_and_assert_nan_tensor(tensor):
 
 def load_vae(model, dtype):
     if os.path.isfile(model):
-        pipe = AnimaPipeline.from_single_file(model, torch_dtype=dtype)
-    else:
-        pipe = AnimaPipeline.from_pretrained(model, torch_dtype=dtype)
-    vae = pipe.vae
+        raise ValueError(
+            "Official Diffusers Anima support requires a Diffusers-format model directory or Hub repository; "
+            "single-file checkpoints are not supported."
+        )
+    vae = AutoencoderKLQwenImage.from_pretrained(model, subfolder="vae", torch_dtype=dtype)
     vae.eval()
     vae.to("cuda", dtype=dtype)
-    del pipe
     return vae
 
 

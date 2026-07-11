@@ -38,6 +38,13 @@ SD_TO_EXTERNAL_MODULES = {
 
 EXTERNAL_TO_SD_MODULES = {value: key for key, value in SD_TO_EXTERNAL_MODULES.items()}
 
+SD_TRANSFORMER_PREFIX = "lora_transformer_transformer_blocks_"
+LEGACY_TRANSFORMER_PREFIXES = (
+    "lora_transformer_core_transformer_blocks_",
+    "lora_transformer_core_blocks_",
+)
+EXTERNAL_TRANSFORMER_PREFIX = "lora_unet_blocks_"
+
 
 def is_supported_external_stem(stem):
     if not stem.startswith("lora_unet_blocks_"):
@@ -54,19 +61,33 @@ def replace_module_suffix(stem, mapping):
 
 
 def external_to_sd_trainer(key):
-    if key.startswith("lora_unet_blocks_"):
-        key = "lora_transformer_core_transformer_" + key[len("lora_unet_") :]
+    if key.startswith(EXTERNAL_TRANSFORMER_PREFIX):
+        key = SD_TRANSFORMER_PREFIX + key[len(EXTERNAL_TRANSFORMER_PREFIX) :]
         return replace_module_suffix(key, EXTERNAL_TO_SD_MODULES)
     return key
 
 
 def sd_trainer_to_external(key):
-    if key.startswith("lora_transformer_core_transformer_blocks_"):
-        key = "lora_unet_" + key[len("lora_transformer_core_transformer_") :]
+    if key.startswith(SD_TRANSFORMER_PREFIX):
+        key = EXTERNAL_TRANSFORMER_PREFIX + key[len(SD_TRANSFORMER_PREFIX) :]
         return replace_module_suffix(key, SD_TO_EXTERNAL_MODULES)
-    if key.startswith("lora_transformer_core_blocks_"):
-        key = "lora_unet_" + key[len("lora_transformer_core_") :]
-        return replace_module_suffix(key, SD_TO_EXTERNAL_MODULES)
+    for prefix in LEGACY_TRANSFORMER_PREFIXES:
+        if key.startswith(prefix):
+            key = EXTERNAL_TRANSFORMER_PREFIX + key[len(prefix) :]
+            return replace_module_suffix(key, SD_TO_EXTERNAL_MODULES)
+    return key
+
+
+def legacy_to_sd_trainer(key):
+    for prefix in LEGACY_TRANSFORMER_PREFIXES:
+        if key.startswith(prefix):
+            return SD_TRANSFORMER_PREFIX + key[len(prefix) :]
+    return key
+
+
+def sd_trainer_to_legacy(key):
+    if key.startswith(SD_TRANSFORMER_PREFIX):
+        return LEGACY_TRANSFORMER_PREFIXES[0] + key[len(SD_TRANSFORMER_PREFIX) :]
     return key
 
 
@@ -76,16 +97,25 @@ def convert_key(key, mode):
         stem = external_to_sd_trainer(stem)
     elif mode == "sd2external":
         stem = sd_trainer_to_external(stem)
+    elif mode == "legacy2sd":
+        stem = legacy_to_sd_trainer(stem)
+    elif mode == "sd2legacy":
+        stem = sd_trainer_to_legacy(stem)
     else:
-        raise ValueError("mode must be external2sd or sd2external")
+        raise ValueError("unsupported conversion mode")
     return stem + "." + suffix
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert Anima LoRA keys between external lora_unet_blocks_* and sd-trainer lora_transformer_core_blocks_* formats.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Convert Anima LoRA keys between external lora_unet_blocks_*, current sd-trainer "
+            "lora_transformer_transformer_blocks_*, and legacy sd-trainer core_* formats."
+        )
+    )
     parser.add_argument("input")
     parser.add_argument("output")
-    parser.add_argument("mode", choices=["external2sd", "sd2external"])
+    parser.add_argument("mode", choices=["external2sd", "sd2external", "legacy2sd", "sd2legacy"])
     parser.add_argument("--drop-unsupported", action="store_true", help="drop converted keys outside the common Anima LoRA attn/mlp set")
     args = parser.parse_args()
 

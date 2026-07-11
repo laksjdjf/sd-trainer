@@ -103,6 +103,16 @@ wheels = [
 ]
 
 [[package]]
+name = "comfy-kitchen"
+version = "0.2.18"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/62/e220adeb4ecc8c997bf9ca021f1c98dc5b7cfd9d856f3f62313a465ffd5b/comfy_kitchen-0.2.18-cp312-abi3-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:321b23d836f12efe7cc3acdfc21cb65f7a074437a6b71c31fdfa34c874225a98", size = 15474393, upload-time = "2026-07-10T02:54:09.339Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/ee/cbdabbbbce5fd4415dc574d29d9b5111e54f3f17e272998c42b56c6d972d/comfy_kitchen-0.2.18-cp312-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:90f7ba3e2aef197c16e89a5f0c1e12b10e8eb160c2791373505b1c8476d062b7", size = 15508172, upload-time = "2026-07-10T02:54:11.486Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/1f/a14c4f4efaf87ca013fb2078c0d22fc8c01d71a5f675541c7e97952f1cce/comfy_kitchen-0.2.18-py3-none-any.whl", hash = "sha256:9ad86327e08316138b648a5032a22d97c85a5939b2f0319bf7188b197a1dc350", size = 117008, upload-time = "2026-07-10T02:54:15.514Z" },
+]
+
+[[package]]
 name = "cuda-bindings"
 version = "12.9.7"
 source = { registry = "https://pypi.org/simple" }
@@ -179,36 +189,6 @@ dependencies = [
     { name = "regex" },
     { name = "requests" },
     { name = "safetensors" },
-]
-
-[[package]]
-name = "diffusers-anima"
-version = "0.1.0"
-source = { git = "https://github.com/hdae/diffusers-anima.git#dc3efc2322befe161dacd516a01addd3fddf671b" }
-dependencies = [
-    { name = "accelerate" },
-    { name = "diffusers" },
-    { name = "einops" },
-    { name = "huggingface-hub" },
-    { name = "peft" },
-    { name = "pillow" },
-    { name = "protobuf" },
-    { name = "safetensors" },
-    { name = "scipy" },
-    { name = "sentencepiece" },
-    { name = "tiktoken" },
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "transformers" },
-]
-
-[[package]]
-name = "einops"
-version = "0.8.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/77/850bef8d72ffb9219f0b1aac23fbc1bf7d038ee6ea666f331fa273031aa2/einops-0.8.2.tar.gz", hash = "sha256:609da665570e5e265e27283aab09e7f279ade90c4f01bcfca111f3d3e13f2827", size = 56261, upload-time = "2026-01-26T04:13:17.638Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/09/f8d8f8f31e4483c10a906437b4ce31bdf3d6d417b73fe33f1a8b59e34228/einops-0.8.2-py3-none-any.whl", hash = "sha256:54058201ac7087911181bfec4af6091bb59380360f069276601256a76af08193", size = 65638, upload-time = "2026-01-26T04:13:18.546Z" },
 ]
 
 [[package]]
@@ -638,27 +618,6 @@ wheels = [
 ]
 
 [[package]]
-name = "peft"
-version = "0.19.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "accelerate" },
-    { name = "huggingface-hub" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "psutil" },
-    { name = "pyyaml" },
-    { name = "safetensors" },
-    { name = "torch" },
-    { name = "tqdm" },
-    { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/86/cf/037f1e3d5186496c05513a6754639e2dab3038a05f384284d49a9bd06a2d/peft-0.19.1.tar.gz", hash = "sha256:0d97542fe96dcdaa20d3b81c06f26f988618f416a73544ab23c3618ccb674a40", size = 763738, upload-time = "2026-04-16T15:46:45.105Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/b6/f54d676ed93cc2dd2234c3b172ea9c8c3d7d29361e66b1b23dec57a67465/peft-0.19.1-py3-none-any.whl", hash = "sha256:2113f72a81621b5913ef28f9022204c742df111890c5f49d812716a4a301e356", size = 680692, upload-time = "2026-04-16T15:46:42.886Z" },
-]
-
-[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -841,28 +800,13 @@ wheels = [
 ]
 
 [[package]]
-name = "scipy"
-version = "1.18.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/25/c2700dfaf6442b4effaa91af24ebce5dc9d31bb4a69706313aae70d72cd0/scipy-1.18.0.tar.gz", hash = "sha256:67b2ad2ad54c72ca6d04975a9b2df8c3638c34ddd5b28738e94fc2b57929d378", size = 30774447, upload-time = "2026-06-19T15:01:43.456Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/23/21f5e703643d66f21faa6b4c73195bfcad70c55efcb4f1ab327cd7c4101a/scipy-1.18.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:52a96e21517c7292375c0e27dd796a811f03fcea5fd4d108fdfea8145dcf17ab", size = 33968720, upload-time = "2026-06-19T14:59:56.415Z" },
-    { url = "https://files.pythonhosted.org/packages/dd/aa/1b939f6c67ed68635bb538e6752d3dacc02f66535182e939a89581a44e9c/scipy-1.18.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1f55797419e16e7f30cf88ffb3113ce0467f00cfe3f70d5c281730b21769bfc2", size = 35287115, upload-time = "2026-06-19T14:59:59.411Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/ff/eec46be7e9234208f801062b53e1983085eddebd693f6c9bfb03b459830d/scipy-1.18.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:ad033410e2e0672ffdc1042110cef20e1c46f8fd0616cee1d44d8d58fad8fc11", size = 35577989, upload-time = "2026-06-19T15:00:02.235Z" },
-    { url = "https://files.pythonhosted.org/packages/84/ca/210d4759c7210bb7d269437421959b39a33434e2776b60c5cb8a763bb30a/scipy-1.18.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:4a55985d54c769c872e64b7f4c8a81cc30ef700cc04296abbbf3705439c126de", size = 37421717, upload-time = "2026-06-19T15:00:05.102Z" },
-]
-
-[[package]]
 name = "sd-trainer"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "accelerate" },
+    { name = "comfy-kitchen" },
     { name = "diffusers" },
-    { name = "diffusers-anima" },
     { name = "hydra-core" },
     { name = "numpy" },
     { name = "omegaconf" },
@@ -871,6 +815,8 @@ dependencies = [
     { name = "pillow" },
     { name = "rich" },
     { name = "safetensors" },
+    { name = "sentencepiece" },
+    { name = "timm" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "tqdm" },
@@ -882,8 +828,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate" },
+    { name = "comfy-kitchen" },
     { name = "diffusers", git = "https://github.com/huggingface/diffusers.git" },
-    { name = "diffusers-anima", marker = "python_full_version >= '3.12'", git = "https://github.com/hdae/diffusers-anima.git" },
     { name = "hydra-core", specifier = ">=1.3" },
     { name = "numpy" },
     { name = "omegaconf" },
@@ -892,6 +838,8 @@ requires-dist = [
     { name = "pillow" },
     { name = "rich" },
     { name = "safetensors" },
+    { name = "sentencepiece" },
+    { name = "timm", specifier = ">=1.0.27" },
     { name = "torch", specifier = ">=2.11,<2.12", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm" },
@@ -975,19 +923,19 @@ wheels = [
 ]
 
 [[package]]
-name = "tiktoken"
-version = "0.13.0"
+name = "timm"
+version = "1.0.27"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "regex" },
-    { name = "requests" },
+    { name = "huggingface-hub" },
+    { name = "pyyaml" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "torchvision" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/e5/5f3cb2159769d0f4324c0e9e87f9de3c4b1cd45848a96b2eb3566ad5ca77/tiktoken-0.13.0.tar.gz", hash = "sha256:c9435714c3a84c2319499de9a300c0e604449dd0799ff246458b3bb6a7f433c1", size = 38986, upload-time = "2026-05-15T04:51:27.153Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/54/ece85b0eef3700c90db8271a43669b05a0ebbe2edb1962329c34374a297e/timm-1.0.27.tar.gz", hash = "sha256:315dfe63186ca9fb7ff941268941231fd5be259f2b4bb4afa28560ae1015cb9a", size = 2439861, upload-time = "2026-05-08T19:38:36.844Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/74/ed/6bb8d05b9f731f749fee5c6f5ca63e981143c826a5985877330507bd13b7/tiktoken-0.13.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:3f277ebea5edd7b8bf03c6f9431e1d67d517530115572b2dc1d465326e8f88c7", size = 1115741, upload-time = "2026-05-15T04:50:34.475Z" },
-    { url = "https://files.pythonhosted.org/packages/34/de/2ca96b07a82d972b74fe4b46de055b79c904e45c7eab699354a0bfa697dc/tiktoken-0.13.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a116178fa7e1b4065bff05214360373a65cac22f965be7b3f73d00a0dbfe7649", size = 1136523, upload-time = "2026-05-15T04:50:35.782Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/dc/9dafec002c2d4424378563cf4cf5c7fb93631d2a55013c8b87554ee4012c/tiktoken-0.13.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:2c397ddda233208345b01bd30f2fca79ff730e55731d0108a603f9bc57f6af3b", size = 1181954, upload-time = "2026-05-15T04:50:36.99Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/d0/1f8578c45b2f24759b46f0b50d31878c63c73e6bf0f2227e10ec5c5408dc/tiktoken-0.13.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:95097e4f89b06403976e498abf61a0ee73a7497e73fb599cb211d8197a054d91", size = 1240069, upload-time = "2026-05-15T04:50:38.221Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/2e/26bab7686ff4aed48f8f5f6c23e2aa37b7a37ddd9effe3aa61e908fd518f/timm-1.0.27-py3-none-any.whl", hash = "sha256:5ff07c9ddf53cbada88eab1c93ff175c64cab683b5a2fddf863bcee985926f89", size = 2589280, upload-time = "2026-05-08T19:38:35.034Z" },
 ]
 
 [[package]]

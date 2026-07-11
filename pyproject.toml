@@ -23,7 +23,9 @@ dependencies = [
     "numpy",
     "opencv-python-headless",
     "pandas",
-    "diffusers-anima ; python_version >= '3.12'",
+    "sentencepiece",
+    "comfy-kitchen",
+    "timm>=1.0.27",
 ]
 
 [dependency-groups]
@@ -40,7 +42,6 @@ diffusers = { git = "https://github.com/huggingface/diffusers.git" }
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 xformers = { index = "pytorch-cu128" }
-diffusers-anima = { git = "https://github.com/hdae/diffusers-anima.git" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
