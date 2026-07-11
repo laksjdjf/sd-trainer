@@ -51,7 +51,7 @@ class BaseDataset(Dataset):
         self.mask = mask
         self.prompt = prompt  # 全ての画像のcaptionをpromptにする
         self.prefix = prefix  # captionのprefix
-        self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
+        self.shuffle = shuffle  # Trueならエポックごとにバッチの組み分けを変える(worker複製前にmain側でinit_batch_samplesを呼ぶ)
         self.ucg = ucg  # captionをランダムにする空文にする確率
 
         self.init_batch_samples()
@@ -61,9 +61,6 @@ class BaseDataset(Dataset):
         return len(self.batch_samples)
 
     def __getitem__(self, i):
-        if i == 0 and self.shuffle:
-            self.init_batch_samples()
-
         batch = {}
         samples = self.batch_samples[i]
 
@@ -162,24 +159,18 @@ class BaseDataset(Dataset):
         return torch.stack(size_condition)
     
     def get_text_embeddings(self, samples, dir="text_emb"):
-        encoder_hidden_states = torch.stack([
-            torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["encoder_hidden_state"])
-            for sample in samples
-        ])
-        encoder_hidden_states.to(memory_format=torch.contiguous_format).float()
-        
-        pooled_outputs = torch.stack([
-            torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["pooled_output"])
-            for sample in samples
-        ])
+        files = [np.load(os.path.join(self.path, dir, sample + ".npz")) for sample in samples]
+        encoder_hidden_states = torch.stack([torch.tensor(f["encoder_hidden_state"]) for f in files])
+        pooled_outputs = torch.stack([torch.tensor(f["pooled_output"]) for f in files])
 
         for i in range(len(samples)):
             if random.random() < self.ucg:
                 uncond = self.text_model.uncond_output
                 pooled_outputs[i] = uncond.pooled_output.clone()
                 encoder_hidden_states[i] = uncond.encoder_hidden_states.clone()
-        
-        pooled_outputs.to(memory_format=torch.contiguous_format).float()
+
+        encoder_hidden_states = encoder_hidden_states.to(memory_format=torch.contiguous_format).float()
+        pooled_outputs = pooled_outputs.to(memory_format=torch.contiguous_format).float()
         return encoder_hidden_states, pooled_outputs
     
     def get_control(self, samples, dir="control"):
@@ -196,5 +187,5 @@ class BaseDataset(Dataset):
             torch.tensor(np.load(os.path.join(self.path, dir, sample + ".npz"))["arr_0"]).unsqueeze(0)
             for sample in samples
         ])
-        masks.to(memory_format=torch.contiguous_format).float()
+        masks = masks.to(memory_format=torch.contiguous_format).float()
         return masks

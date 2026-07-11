@@ -56,7 +56,7 @@ class DualDataset(BaseDataset):
         self.prompt_w = prompt_w  # 全ての画像のcaptionをpromptにする
         self.prompt_l = prompt_l
         self.prefix = prefix  # captionのprefix
-        self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
+        self.shuffle = shuffle  # Trueならエポックごとにバッチの組み分けを変える(worker複製前にmain側でinit_batch_samplesを呼ぶ)
         self.ucg = ucg  # captionをランダムにする空文にする確率
 
         self.init_batch_samples()
@@ -66,9 +66,6 @@ class DualDataset(BaseDataset):
         return len(self.batch_samples)
 
     def __getitem__(self, i):
-        if i == 0 and self.shuffle:
-            self.init_batch_samples()
-
         batch = {}
         samples = self.batch_samples[i]
 
@@ -155,7 +152,7 @@ class TripleDataset(BaseDataset):
         self.mask = mask
         self.prompt = prompt  # 全ての画像のcaptionをpromptにする
         self.prefix = prefix  # captionのprefix
-        self.shuffle = shuffle  # バッチの取り出し方をシャッフルするかどうか（データローダー側でシャッフルした方が良い＾＾）
+        self.shuffle = shuffle  # Trueならエポックごとにバッチの組み分けを変える(worker複製前にmain側でinit_batch_samplesを呼ぶ)
         self.ucg = ucg  # captionをランダムにする空文にする確率
 
         self.init_batch_samples()
@@ -165,9 +162,6 @@ class TripleDataset(BaseDataset):
         return len(self.batch_samples)
 
     def __getitem__(self, i):
-        if i == 0 and self.shuffle:
-            self.init_batch_samples()
-
         batch = {}
         samples = self.batch_samples[i]
 

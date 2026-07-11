@@ -101,6 +101,7 @@ class BaseTrainer:
 
     @torch.no_grad()
     def decode_latents(self, latents):
+        original_device = self.vae.device  # 移動前に取らないと退避先がcudaになってしまう
         self.vae.to("cuda")
         images = []
         
@@ -116,7 +117,7 @@ class BaseTrainer:
         images = torch.cat(images, dim=0)
         images = (images / 2 + 0.5).clamp(0, 1)
 
-        self.vae.to(self.vae.device)
+        self.vae.to(original_device)
 
         if self.model_type == "anima" and len(images.shape) == 5:
             images = images[:, :, 0]
@@ -137,6 +138,7 @@ class BaseTrainer:
 
     @torch.no_grad()
     def encode_latents(self, images):
+        original_device = self.vae.device  # 移動前に取らないと退避先がcudaになってしまう
         self.vae.to("cuda")
         to_tensor_norm = transforms.Compose(
             [
@@ -156,7 +158,7 @@ class BaseTrainer:
             latents = self.vae.encode(images).latent_dist.sample()
         else:
             latents = self.vae.encode(images).latents
-        self.vae.to(self.vae.device)
+        self.vae.to(original_device)
         return latents
     
     def to(self, device="cuda", dtype=torch.float16, vae_dtype=None, te_device=None):

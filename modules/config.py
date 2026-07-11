@@ -13,14 +13,14 @@ class MainConfig:
     variant: Optional[str] = None
     nf4: Optional[bool] = False
     taesd: Optional[bool] = False
-    clip_skip: Optional[bool] = None
+    clip_skip: Optional[int] = None
     steps: Optional[int] = None
     epochs: Optional[int] = None
     save_steps: Optional[int] = None
     save_epochs: Optional[int] = 1
     sample_steps: Optional[int] = None
     sample_epochs: Optional[int] = 1
-    log_level: str = "loggging.WARNING"
+    log_level: str = "logging.WARNING"
     wandb: Optional[str] = None
 
 @dataclass

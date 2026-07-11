@@ -79,6 +79,9 @@ def main(config):
     current_step = 0
 
     for epoch in range(total_epochs):
+        # バッチの組み分けをエポックごとに変える(DataLoaderのworker起動前に本体側で行う必要がある)
+        if epoch > 0 and getattr(dataset, "shuffle", False):
+            dataset.init_batch_samples()
         for batch in dataloader:
             logs = trainer.step(batch)
 
@@ -95,6 +98,7 @@ def main(config):
                     images = [wandb.Image(image, caption=config.trainer.validation_args.prompt) for image in images]
                     wandb_run.log({'images': images}, step=current_step)
                 else:
+                    os.makedirs("image_logs", exist_ok=True)
                     [image.save(f"image_logs/{current_step}_{i}.png") for i, image in enumerate(images)]
 
             current_step += 1
