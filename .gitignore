@@ -74,3 +74,6 @@ tmp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Mission Control UIの実行時ファイル
+ui/run_metrics.jsonl

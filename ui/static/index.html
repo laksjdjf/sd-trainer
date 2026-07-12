@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SD-Trainer Mission Control</title>
+<style>
+  :root {
+    --bg: #0b1020; --bg2: #0e1428;
+    --panel: #121a33; --panel2: #0f1730;
+    --line: #22305230; --line-strong: #2a3a63;
+    --ink: #d8e4ff; --muted: #6b7ba6;
+    --amber: #ffb454; --cyan: #5fd9e8; --pink: #ff6fa5;
+    --good: #57e39a; --bad: #ff5d5d;
+    --font-display: "Bahnschrift", "Avenir Next Condensed", "Arial Narrow", sans-serif;
+    --font-body: "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    --font-mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 70% -10%, #16214400 0%, transparent 60%),
+      radial-gradient(900px 500px at 10% 110%, #1a123355 0%, transparent 60%),
+      var(--bg);
+    color: var(--ink); font-family: var(--font-body);
+    font-size: 14px; line-height: 1.6; min-height: 100vh;
+  }
+  ::selection { background: #ffb45444; }
+
+  header.topbar {
+    display: flex; align-items: center; gap: 18px; padding: 14px 22px;
+    border-bottom: 1px solid var(--line-strong);
+    background: linear-gradient(180deg, #121a33dd, #0e142899);
+    position: sticky; top: 0; z-index: 5; backdrop-filter: blur(6px);
+  }
+  .brand { font-family: var(--font-display); font-size: 20px; letter-spacing: 0.14em; color: var(--amber); white-space: nowrap; }
+  .brand small { color: var(--muted); letter-spacing: 0.22em; font-size: 11px; display: block; margin-top: -2px; }
+  .runchip { font-family: var(--font-mono); font-size: 12px; border: 1px solid var(--line-strong); border-radius: 3px; padding: 3px 10px; color: var(--cyan); background: #0b122650; }
+  .spacer { flex: 1; }
+  .statusled { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); letter-spacing: 0.18em; font-size: 13px; }
+  .led { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .led.training { background: var(--good); box-shadow: 0 0 10px var(--good); }
+  .led.paused { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+  .led.failed, .led.stopped { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+  .led.finished { background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+  @media (prefers-reduced-motion: no-preference) {
+    .led.training { animation: blink 1.6s ease-in-out infinite; }
+    @keyframes blink { 50% { opacity: 0.45; } }
+  }
+  .clock { font-family: var(--font-mono); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  main.cockpit { display: grid; grid-template-columns: 250px minmax(0, 1fr) 330px; gap: 14px; padding: 14px 22px 26px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 1080px) { main.cockpit { grid-template-columns: 1fr; } }
+
+  .panel { background: linear-gradient(180deg, var(--panel), var(--panel2)); border: 1px solid var(--line-strong); border-radius: 6px; padding: 14px 16px; }
+  .panel + .panel { margin-top: 14px; }
+  .eyebrow { font-family: var(--font-display); font-size: 11px; letter-spacing: 0.24em; color: var(--muted); text-transform: uppercase; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); }
+
+  /* launch */
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-family: var(--font-display); font-size: 10px; letter-spacing: 0.2em; color: var(--muted); margin-bottom: 4px; }
+  .field input { width: 100%; background: #0b122680; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink); font-family: var(--font-mono); font-size: 12px; padding: 7px 9px; }
+  .field input:focus-visible { outline: none; border-color: var(--cyan); box-shadow: 0 0 8px #5fd9e833; }
+  button.ctl { font-family: var(--font-display); letter-spacing: 0.16em; font-size: 12px; background: #0b122650; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 4px; padding: 9px 14px; cursor: pointer; }
+  button.ctl:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); box-shadow: 0 0 10px #ffb45433; }
+  button.ctl:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  button.ctl:disabled { opacity: 0.35; cursor: not-allowed; }
+  button.ctl.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); box-shadow: 0 0 10px #ff5d5d33; }
+  button.ctl.primary { border-color: var(--amber); color: var(--amber); }
+
+  /* pipeline */
+  .stage { display: grid; grid-template-columns: 20px 1fr auto; gap: 0 10px; align-items: center; padding: 9px 4px; position: relative; }
+  .stage + .stage::before { content: ""; position: absolute; left: 13px; top: -12px; width: 2px; height: 16px; background: var(--line-strong); }
+  .stage .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--bg2); display: grid; place-items: center; font-size: 10px; color: var(--good); }
+  .stage.done .dot { border-color: var(--good); }
+  .stage.done .dot::after { content: "✓"; }
+  .stage.active .dot { border-color: var(--amber); }
+  @media (prefers-reduced-motion: no-preference) {
+    .stage.active .dot { animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 50% { box-shadow: 0 0 14px var(--amber); } }
+  }
+  .stage .name { font-family: var(--font-display); letter-spacing: 0.1em; font-size: 13px; }
+  .stage.active .name { color: var(--amber); }
+  .stage .count { font-family: var(--font-mono); font-size: 11px; color: var(--cyan); font-variant-numeric: tabular-nums; }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 12.5px; }
+  .kv dt { color: var(--muted); margin: 0; }
+  .kv dd { margin: 0; font-family: var(--font-mono); color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+
+  /* telemetry */
+  .lossy { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+  .bignum { font-family: var(--font-display); font-size: 42px; color: var(--amber); letter-spacing: 0.04em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bignum small { font-size: 13px; color: var(--muted); letter-spacing: 0.18em; display: block; margin-bottom: 4px; }
+  .chip { font-family: var(--font-mono); font-size: 12px; color: var(--cyan); border: 1px solid var(--line-strong); border-radius: 3px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
+  .chartwrap { position: relative; }
+  canvas.loss { width: 100%; height: 240px; display: block; }
+  .nosignal { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-family: var(--font-display); letter-spacing: 0.3em; font-size: 13px; }
+
+  .gaugerow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-top: 14px; }
+  .gauge { background: #0b122650; border: 1px solid var(--line); border-radius: 5px; padding: 12px 14px; }
+  .gauge .glabel { font-family: var(--font-display); font-size: 11px; letter-spacing: 0.2em; color: var(--muted); }
+  .gauge .gval { font-family: var(--font-mono); font-size: 21px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: #1a2547; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--amber)); border-radius: 3px; transition: width 0.4s; }
+  .ringwrap { display: flex; gap: 14px; align-items: center; }
+  svg.ring { width: 74px; height: 74px; flex: none; }
+  svg.ring .track { stroke: #1a2547; }
+  svg.ring .arc { stroke: var(--amber); stroke-linecap: round; transition: stroke-dashoffset 0.4s; filter: drop-shadow(0 0 4px #ffb45488); }
+  svg.ring text { fill: var(--ink); font-family: var(--font-mono); font-size: 13px; }
+  .controls { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+  /* samples & feed */
+  .thumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .thumbs .empty { grid-column: 1 / -1; color: var(--muted); font-size: 12px; text-align: center; padding: 18px 0; }
+  .thumb { position: relative; border: 1px solid var(--line-strong); border-radius: 4px; overflow: hidden; aspect-ratio: 832/1216; background: #0b1226; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb .tag { position: absolute; left: 0; bottom: 0; right: 0; font-family: var(--font-mono); font-size: 10px; color: var(--cyan); background: linear-gradient(0deg, #0b1020ee, transparent); padding: 10px 6px 3px; }
+  .thumb.fresh { box-shadow: 0 0 0 1px var(--amber), 0 0 16px #ffb45455; }
+
+  .feed { font-family: var(--font-mono); font-size: 11.5px; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+  .feed .line { white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+  .feed .line .who { color: var(--pink); }
+  .feed::-webkit-scrollbar { width: 8px; }
+  .feed::-webkit-scrollbar-thumb { background: #22305299; border-radius: 4px; }
+
+  footer.note { text-align: center; color: var(--muted); font-size: 12px; padding: 8px 0 24px; }
+  footer.note code { font-family: var(--font-mono); color: var(--cyan); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">SD-TRAINER<small>MISSION CONTROL</small></div>
+  <span class="runchip" id="runChip">run: —</span>
+  <div class="spacer"></div>
+  <div class="statusled"><span class="led" id="led"></span><span id="statusText">IDLE</span></div>
+  <div class="clock" id="clock">--:--:--</div>
+</header>
+
+<main class="cockpit">
+
+  <!-- left -->
+  <div>
+    <section class="panel">
+      <div class="eyebrow">Launch</div>
+      <div class="field">
+        <label for="overrides">HYDRA OVERRIDES</label>
+        <input id="overrides" value="experiment=example" spellcheck="false">
+      </div>
+      <div class="controls" style="margin-top:6px">
+        <button class="ctl primary" id="btnStart">▶ START</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="eyebrow">Pipeline</div>
+      <div class="field">
+        <label for="dsPath">DATASET DIR</label>
+        <input id="dsPath" value="dataset" spellcheck="false">
+      </div>
+      <div class="controls" style="margin:0 0 8px"><button class="ctl" id="btnScan">⌕ SCAN</button></div>
+      <div class="stage" id="stImages"><span class="dot"></span><span class="name">IMAGES</span><span class="count">—</span></div>
+      <div class="stage" id="stBuckets"><span class="dot"></span><span class="name">BUCKETS</span><span class="count">—</span></div>
+      <div class="stage" id="stCaptions"><span class="dot"></span><span class="name">CAPTIONS</span><span class="count">—</span></div>
+      <div class="stage" id="stLatents"><span class="dot"></span><span class="name">LATENTS</span><span class="count">—</span></div>
+      <div class="stage" id="stTextEmb"><span class="dot"></span><span class="name">TEXT EMB</span><span class="count">—</span></div>
+      <div class="stage" id="stTrain"><span class="dot"></span><span class="name">TRAIN</span><span class="count" id="pipeStep">—</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="eyebrow">Run Config</div>
+      <dl class="kv" id="runConfig"><dt>overrides</dt><dd>—</dd></dl>
+    </section>
+  </div>
+
+  <!-- center -->
+  <div>
+    <section class="panel">
+      <div class="eyebrow">Telemetry</div>
+      <div class="lossy">
+        <div class="bignum"><small>LOSS EMA</small><span id="lossVal">—</span></div>
+        <span class="chip" id="lrChip">lr —</span>
+        <span class="chip" id="spsChip">— samples/s</span>
+        <span class="chip" id="etaChip">ETA —</span>
+      </div>
+      <div class="chartwrap">
+        <canvas class="loss" id="lossChart"></canvas>
+        <div class="nosignal" id="noSignal">NO SIGNAL — 学習を開始してね</div>
+      </div>
+
+      <div class="gaugerow">
+        <div class="gauge">
+          <div class="ringwrap">
+            <svg class="ring" viewBox="0 0 74 74" role="img" aria-label="進捗">
+              <circle class="track" cx="37" cy="37" r="30" fill="none" stroke-width="7"></circle>
+              <circle class="arc" id="ringArc" cx="37" cy="37" r="30" fill="none" stroke-width="7" stroke-dasharray="188.5" stroke-dashoffset="188.5" transform="rotate(-90 37 37)"></circle>
+              <text x="37" y="41" text-anchor="middle" id="ringPct">0%</text>
+            </svg>
+            <div>
+              <div class="glabel">PROGRESS</div>
+              <div class="gval" id="stepVal">— / —</div>
+              <div class="glabel" style="margin-top:4px">EPOCH <span id="epochVal" style="color:var(--ink)">—</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="gauge">
+          <div class="glabel">VRAM</div>
+          <div class="gval"><span id="vramVal">—</span> <span style="font-size:12px;color:var(--muted)" id="vramTotal">/ — GB</span></div>
+          <div class="bar"><i id="vramBar" style="width:0%"></i></div>
+        </div>
+        <div class="gauge">
+          <div class="glabel">GPU UTIL</div>
+          <div class="gval"><span id="utilVal">—</span> <span style="font-size:12px;color:var(--muted)">%</span></div>
+          <div class="bar"><i id="utilBar" style="width:0%"></i></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="ctl" id="btnPause" disabled>⏸ PAUSE</button>
+        <button class="ctl danger" id="btnStop" disabled>■ STOP</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- right -->
+  <div>
+    <section class="panel">
+      <div class="eyebrow">Validation Samples</div>
+      <div class="thumbs" id="thumbs"><div class="empty">まだサンプルはないよ</div></div>
+    </section>
+    <section class="panel">
+      <div class="eyebrow">Event Feed</div>
+      <div class="feed" id="feed"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="note">
+  sd-trainer mission control — <code>uv run uvicorn ui.server:app --port 7860</code>
+</footer>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const CHANS = ["メインちゃん", "トレーナーちゃん", "データセットちゃん", "量子化ちゃん"];
+
+  // ---------- state ----------
+  let steps = [];        // stepイベント {step, loss_ema, lr, samples_per_second, time}
+  let runInfo = null;    // startイベント
+  let status = "idle";
+
+  // ---------- chart ----------
+  const cv = $("lossChart"), ctx = cv.getContext("2d");
+  function drawChart() {
+    const dpr = devicePixelRatio || 1;
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const data = steps.slice(-400).map(s => s.loss_ema).filter(v => typeof v === "number");
+    $("noSignal").style.display = data.length > 1 ? "none" : "grid";
+    if (data.length < 2) return;
+    const lo = Math.min(...data) - 0.002, hi = Math.max(...data) + 0.002;
+    const x = i => (i / (data.length - 1)) * (w - 60) + 8;
+    const y = v => h - 22 - ((v - lo) / (hi - lo)) * (h - 40);
+    ctx.strokeStyle = "#22305255"; ctx.lineWidth = 1;
+    ctx.fillStyle = "#6b7ba6"; ctx.font = "10px Consolas, monospace";
+    for (let g = 0; g <= 3; g++) {
+      const v = lo + (hi - lo) * (g / 3), yy = y(v);
+      ctx.beginPath(); ctx.moveTo(8, yy); ctx.lineTo(w - 52, yy); ctx.stroke();
+      ctx.fillText(v.toFixed(4), w - 46, yy + 3);
+    }
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, "#5fd9e828"); grad.addColorStop(1, "#5fd9e800");
+    ctx.beginPath();
+    data.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
+    ctx.strokeStyle = "#ffb454"; ctx.lineWidth = 2;
+    ctx.shadowColor = "#ffb45488"; ctx.shadowBlur = 6; ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.lineTo(x(data.length - 1), h - 22); ctx.lineTo(8, h - 22); ctx.closePath();
+    ctx.fillStyle = grad; ctx.fill();
+    const last = data[data.length - 1];
+    ctx.beginPath(); ctx.arc(x(data.length - 1), y(last), 3.5, 0, 7);
+    ctx.fillStyle = "#ffb454"; ctx.fill();
+  }
+  addEventListener("resize", drawChart);
+
+  // ---------- readouts ----------
+  function fmtEta(sec) {
+    if (!isFinite(sec) || sec < 0) return "—";
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+    return (h ? h + ":" : "") + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+  function refreshReadouts() {
+    const last = steps[steps.length - 1];
+    if (!last) return;
+    const total = runInfo ? runInfo.total_steps : null;
+    if (typeof last.loss_ema === "number") $("lossVal").textContent = last.loss_ema.toFixed(4);
+    if (typeof last.lr === "number") $("lrChip").textContent = "lr " + last.lr.toExponential(2);
+    if (typeof last.samples_per_second === "number") $("spsChip").textContent = last.samples_per_second.toFixed(1) + " samples/s";
+    if (total) {
+      const recent = steps.slice(-60);
+      let eta = NaN;
+      if (recent.length > 5 && recent[recent.length - 1].time > recent[0].time) {
+        const rate = (recent.length - 1) / (recent[recent.length - 1].time - recent[0].time);
+        eta = (total - last.step) / rate;
+      }
+      $("etaChip").textContent = "ETA " + fmtEta(eta);
+      $("stepVal").textContent = `${last.step} / ${total}`;
+      $("pipeStep").textContent = "step " + last.step;
+      const pct = Math.min(1, last.step / total);
+      $("ringArc").style.strokeDashoffset = 188.5 * (1 - pct);
+      $("ringPct").textContent = Math.round(pct * 100) + "%";
+      if (runInfo.total_epochs) $("epochVal").textContent = `${(last.epoch ?? 0) + 1} / ${runInfo.total_epochs}`;
+    }
+    drawChart();
+  }
+
+  // ---------- status ----------
+  function setStatus(s) {
+    status = s;
+    $("led").className = "led " + s;
+    $("statusText").textContent = s.toUpperCase();
+    const running = s === "training" || s === "paused";
+    $("btnStart").disabled = running;
+    $("btnPause").disabled = !running;
+    $("btnStop").disabled = !running;
+    $("btnPause").textContent = s === "paused" ? "▶ RESUME" : "⏸ PAUSE";
+    $("stTrain").className = "stage" + (s === "training" ? " active" : (s === "finished" ? " done" : ""));
+  }
+
+  // ---------- feed ----------
+  const feedEl = $("feed");
+  function addLog(line) {
+    const div = document.createElement("div");
+    div.className = "line";
+    div.textContent = line;
+    for (const who of CHANS) {
+      if (line.includes(who)) {
+        div.innerHTML = "";
+        const parts = line.split(who);
+        parts.forEach((p, i) => {
+          if (i) { const s = document.createElement("span"); s.className = "who"; s.textContent = who; div.appendChild(s); }
+          div.appendChild(document.createTextNode(p));
+        });
+        break;
+      }
+    }
+    feedEl.prepend(div);
+    while (feedEl.children.length > 200) feedEl.lastChild.remove();
+  }
+
+  // ---------- samples ----------
+  const thumbsEl = $("thumbs");
+  function addSample(s, fresh) {
+    const empty = thumbsEl.querySelector(".empty");
+    if (empty) empty.remove();
+    const div = document.createElement("div");
+    div.className = "thumb" + (fresh ? " fresh" : "");
+    const img = document.createElement("img");
+    img.src = s.url; img.alt = s.name; img.loading = "lazy";
+    const tag = document.createElement("div");
+    tag.className = "tag"; tag.textContent = s.name;
+    div.append(img, tag);
+    thumbsEl.prepend(div);
+    if (fresh) setTimeout(() => div.classList.remove("fresh"), 2500);
+    while (thumbsEl.children.length > 9) thumbsEl.lastChild.remove();
+  }
+
+  // ---------- run config ----------
+  function showRunConfig() {
+    const kv = $("runConfig");
+    kv.innerHTML = "";
+    const rows = [];
+    const ov = (window._overrides || []).join(" ") || "—";
+    rows.push(["overrides", ov]);
+    if (runInfo) {
+      rows.push(["total steps", runInfo.total_steps]);
+      rows.push(["epochs", runInfo.total_epochs]);
+      rows.push(["output", runInfo.output_path]);
+    }
+    for (const [k, v] of rows) {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v;
+      kv.append(dt, dd);
+    }
+    $("runChip").textContent = "run: " + (runInfo ? runInfo.output_path : "—");
+  }
+
+  // ---------- websocket ----------
+  function handle(msg) {
+    switch (msg.type) {
+      case "snapshot":
+        steps = msg.steps || [];
+        runInfo = msg.run_info;
+        window._overrides = msg.overrides;
+        feedEl.innerHTML = "";
+        (msg.logs || []).forEach(addLog);
+        thumbsEl.innerHTML = '<div class="empty">まだサンプルはないよ</div>';
+        (msg.samples || []).forEach(s => addSample(s, false));
+        if (msg.gpu) handle({ type: "gpu", gpu: msg.gpu });
+        setStatus(msg.status);
+        showRunConfig();
+        refreshReadouts();
+        break;
+      case "metrics":
+        if (msg.event === "start") { runInfo = msg; showRunConfig(); }
+        else if (msg.event === "step") { steps.push(msg); if (steps.length > 2000) steps.shift(); refreshReadouts(); }
+        break;
+      case "log": addLog(msg.line); break;
+      case "sample": addSample(msg, true); break;
+      case "status": setStatus(msg.status); break;
+      case "gpu":
+        if (msg.gpu) {
+          $("vramVal").textContent = msg.gpu.used_gb.toFixed(1);
+          $("vramTotal").textContent = "/ " + msg.gpu.total_gb.toFixed(1) + " GB";
+          $("vramBar").style.width = (msg.gpu.used_gb / msg.gpu.total_gb * 100) + "%";
+          $("utilVal").textContent = msg.gpu.util;
+          $("utilBar").style.width = msg.gpu.util + "%";
+        }
+        break;
+    }
+  }
+  function connect() {
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    ws.onmessage = e => handle(JSON.parse(e.data));
+    ws.onclose = () => setTimeout(connect, 2000);
+  }
+  connect();
+
+  // ---------- api ----------
+  async function post(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : null,
+    });
+    if (!res.ok) addLog(`[UI] ${path} failed: ${(await res.json()).detail || res.status}`);
+    return res.ok;
+  }
+  $("btnStart").addEventListener("click", () => {
+    const overrides = $("overrides").value.trim().split(/\s+/).filter(Boolean);
+    window._overrides = overrides;
+    post("/api/train/start", { overrides });
+  });
+  $("btnPause").addEventListener("click", () => post(status === "paused" ? "/api/train/resume" : "/api/train/pause"));
+  $("btnStop").addEventListener("click", () => post("/api/train/stop"));
+
+  // ---------- dataset scan ----------
+  $("btnScan").addEventListener("click", async () => {
+    const path = $("dsPath").value.trim();
+    const res = await fetch("/api/dataset?path=" + encodeURIComponent(path));
+    if (!res.ok) { addLog(`[UI] dataset scan failed: ${(await res.json()).detail}`); return; }
+    const d = await res.json();
+    const set = (id, count, done) => {
+      const el = $(id);
+      el.querySelector(".count").textContent = count;
+      el.className = "stage" + (done ? " done" : "");
+    };
+    const n = d.buckets ? d.buckets.num_images : d.images;
+    set("stImages", d.images + "枚", d.images > 0);
+    set("stBuckets", d.buckets ? d.buckets.num_buckets + " bkt" : "—", !!d.buckets);
+    set("stCaptions", `${d.captions}/${n}`, d.captions >= n && n > 0);
+    set("stLatents", `${d.latents}/${n}`, d.latents >= n && n > 0);
+    set("stTextEmb", `${d.text_emb}/${n}`, d.text_emb >= n && n > 0);
+    addLog(`[UI] データセットをスキャンしたよ: ${path} (${d.images}枚)`);
+  });
+
+  // ---------- clock ----------
+  function tickClock() { $("clock").textContent = new Date().toTimeString().slice(0, 8); }
+  tickClock(); setInterval(tickClock, 1000);
+})();
+</script>
+</body>
+</html>

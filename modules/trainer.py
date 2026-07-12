@@ -401,12 +401,24 @@ class BaseTrainer:
 
         return logs
 
+    def _metrics_writer(self):
+        # UI連携用: SD_TRAINER_METRICSにパスが設定されていたらJSONLでメトリクスを書き出す
+        path = os.environ.get("SD_TRAINER_METRICS")
+        if not path:
+            return lambda record: None
+        f = open(path, "a", buffering=1)
+        return lambda record: f.write(json.dumps(record) + "\n")
+
     def fit(self, dataloader, main_config):
         # 学習ループ本体。事前にprepare_modules_for_training〜prepare_optimizerを済ませておくこと。
         steps_per_epoch = len(dataloader)
         total_steps = main_config.steps or steps_per_epoch * main_config.epochs
         total_epochs = main_config.epochs or math.ceil(total_steps / steps_per_epoch)
         logger.info(f"トータルのステップ数は{total_steps}だよ！")
+
+        write_metrics = self._metrics_writer()
+        write_metrics({"event": "start", "total_steps": total_steps, "total_epochs": total_epochs,
+                       "output_path": main_config.output_path, "time": time.time()})
 
         self.prepare_lr_scheduler(total_steps)
 
@@ -435,9 +447,11 @@ class BaseTrainer:
                 progress_bar.set_postfix(logs)
                 if wandb_run is not None:
                     wandb_run.log(logs, step=current_step)
+                write_metrics({"event": "step", "step": current_step, "epoch": epoch, "time": time.time(), **logs})
 
                 if current_step % save_interval == 0 or current_step == total_steps - 1:
                     self.save_model(main_config.output_path)
+                    write_metrics({"event": "save", "step": current_step, "time": time.time()})
                 if current_step % sample_interval == 0 or current_step == total_steps - 1:
                     images = self.sample_validation()
                     if wandb_run is not None:
@@ -445,13 +459,17 @@ class BaseTrainer:
                         wandb_run.log({'images': images}, step=current_step)
                     else:
                         os.makedirs("image_logs", exist_ok=True)
+                        files = []
                         for i, image in enumerate(images):
                             image.save(f"image_logs/{current_step}_{i}.png")
+                            files.append(f"{current_step}_{i}.png")
+                        write_metrics({"event": "sample", "step": current_step, "files": files, "time": time.time()})
 
                 current_step += 1
 
                 if current_step == total_steps:
                     logger.info("トレーニングが終わったよ！")
+                    write_metrics({"event": "end", "step": current_step, "time": time.time()})
                     if wandb_run is not None:
                         wandb_run.finish()
                     return

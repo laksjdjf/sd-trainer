@@ -32,6 +32,28 @@ uv run python -m preprocess masks -d dataset -o dataset/mask      # 顔マスク
 各処理はライブラリ関数(進捗コールバック対応)としても呼び出せる。旧単発スクリプトのうち
 現役でないもの(PFG関連・旧tagger等)は `preprocess/legacy/` にある。
 
+## Mission Control (Web UI)
+
+学習の起動・監視用のコックピットUI。ブラウザで `http://localhost:7860` を開く。
+
+```bash
+uv run uvicorn ui.server:app --port 7860
+```
+
+- Hydraオーバーライドを指定して学習をSTART、PAUSE(SIGSTOP)/STOP(SIGTERM)もUIから
+- loss EMA・lr・samples/s・ETA・進捗・GPU(VRAM/使用率)をWebSocketでリアルタイム表示
+- validationサンプル画像(`image_logs/`)のギャラリーとログのイベントフィード
+- データセットディレクトリをSCANするとキャッシュ(caption/latent/text_emb)の充足状況を表示
+
+メトリクスは環境変数 `SD_TRAINER_METRICS` にパスが設定されたときだけ
+`trainer.fit()` がJSONLで書き出す(UIサーバーが自動設定。通常のCLI実行には影響なし)。
+
+GPUなしでUIを試すデモモード:
+
+```bash
+SD_TRAINER_UI_CMD=".venv/bin/python ui/dev_fake_train.py" uv run uvicorn ui.server:app --port 7860
+```
+
 
 # 参考リポジトリ
 https://github.com/harubaru/waifu-diffusion
