@@ -130,6 +130,24 @@
 
   footer.note { text-align: center; color: var(--muted); font-size: 12px; padding: 8px 0 24px; }
   footer.note code { font-family: var(--font-mono); color: var(--cyan); }
+
+  /* config editor */
+  .modal { position: fixed; inset: 0; background: #05081599; backdrop-filter: blur(3px); display: grid; place-items: center; z-index: 20; }
+  .modal[hidden] { display: none; }
+  .modal-box { width: min(820px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
+  .cfg-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+  .cfg-groups select { width: 100%; background: #0b122680; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink); font-family: var(--font-mono); font-size: 12px; padding: 6px 8px; }
+  .cfg-form { overflow-y: auto; flex: 1; min-height: 120px; }
+  .cfg-form details { border: 1px solid var(--line); border-radius: 5px; margin-bottom: 8px; background: #0b122630; }
+  .cfg-form summary { cursor: pointer; font-family: var(--font-display); letter-spacing: 0.18em; font-size: 12px; color: var(--amber); padding: 8px 12px; }
+  .cfg-row { display: grid; grid-template-columns: minmax(140px, 40%) 1fr; gap: 10px; align-items: center; padding: 3px 12px 3px; }
+  .cfg-row:last-child { padding-bottom: 10px; }
+  .cfg-row label { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cfg-row input[type="text"] { width: 100%; background: #0b122680; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink); font-family: var(--font-mono); font-size: 12px; padding: 4px 8px; }
+  .cfg-row input[type="text"]:focus-visible { outline: none; border-color: var(--cyan); }
+  .cfg-row input.changed { border-color: var(--amber); color: var(--amber); box-shadow: 0 0 6px #ffb45433; }
+  .cfg-row input[type="checkbox"] { accent-color: var(--amber); width: 15px; height: 15px; justify-self: start; }
+  .cfg-hint { color: var(--muted); font-size: 12px; padding: 20px; text-align: center; }
 </style>
 </head>
 <body>
@@ -154,6 +172,7 @@
       </div>
       <div class="controls" style="margin-top:6px">
         <button class="ctl primary" id="btnStart">▶ START</button>
+        <button class="ctl" id="btnConfig">⚙ CONFIG</button>
       </div>
     </section>
 
@@ -247,6 +266,20 @@
     </section>
   </div>
 </main>
+
+<div class="modal" id="cfgModal" hidden>
+  <div class="modal-box panel">
+    <div class="eyebrow">Config Editor</div>
+    <div class="cfg-groups" id="cfgGroups"></div>
+    <div class="controls" style="margin:12px 0">
+      <button class="ctl" id="btnCompose">⟳ COMPOSE</button>
+      <button class="ctl primary" id="btnApply" disabled>✔ APPLY → OVERRIDES</button>
+      <span class="spacer"></span>
+      <button class="ctl" id="btnCloseCfg">✕ CLOSE</button>
+    </div>
+    <div class="cfg-form" id="cfgForm"><div class="cfg-hint">グループを選んで ⟳ COMPOSE すると、合成された設定がここに出るよ。<br>値を書き換えてAPPLYすると差分だけがオーバーライドになる。</div></div>
+  </div>
+</div>
 
 <footer class="note">
   sd-trainer mission control — <code>uv run uvicorn ui.server:app --port 7860</code>
@@ -452,7 +485,8 @@
     return res.ok;
   }
   $("btnStart").addEventListener("click", () => {
-    const overrides = $("overrides").value.trim().split(/\s+/).filter(Boolean);
+    // 引用符内の空白は区切らない(例: prompt="1girl, solo" は1トークン)
+    const overrides = $("overrides").value.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
     window._overrides = overrides;
     post("/api/train/start", { overrides });
   });
@@ -501,6 +535,125 @@
     ov.value = kept.concat(parts).join(" ");
     addLog("[UI] データセット設定をオーバーライドに反映したよ: " + parts.join(" "));
   });
+
+  // ---------- config editor ----------
+  const cfgModal = $("cfgModal");
+  let cfgBaseline = {};  // path -> 文字列化したベースライン値(差分検出用)
+  const GROUP_DEFAULTS = { model: "sdxl", trainer: "base", dataset: "base", network: "lora", experiment: "" };
+
+  function leafToStr(v) {
+    if (v === null) return "null";
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  }
+  function quoteVal(s) {
+    // リスト/辞書リテラルやプレーンな値はそのまま、空白・カンマ等を含む文字列は引用する
+    if (/^[\[{]/.test(s) || !/[\s,=#'"]/.test(s)) return s;
+    return '"' + s.replace(/"/g, '\\"') + '"';
+  }
+
+  $("btnConfig").addEventListener("click", async () => {
+    cfgModal.hidden = false;
+    if ($("cfgGroups").children.length) return;
+    const res = await fetch("/api/config/groups");
+    if (!res.ok) { addLog("[UI] グループ一覧の取得に失敗したよ"); return; }
+    const groups = await res.json();
+    for (const [g, opts] of Object.entries(groups)) {
+      const wrap = document.createElement("div");
+      wrap.className = "field";
+      const label = document.createElement("label");
+      label.textContent = g.toUpperCase();
+      const sel = document.createElement("select");
+      sel.id = "grp_" + g;
+      if (g === "experiment") { const o = document.createElement("option"); o.value = ""; o.textContent = "—"; sel.appendChild(o); }
+      for (const opt of opts) { const o = document.createElement("option"); o.value = opt; o.textContent = opt; sel.appendChild(o); }
+      const def = GROUP_DEFAULTS[g];
+      if ([...sel.options].some(o => o.value === def)) sel.value = def;
+      wrap.append(label, sel);
+      $("cfgGroups").appendChild(wrap);
+    }
+  });
+
+  function groupOverrides() {
+    const parts = [];
+    for (const g of ["model", "trainer", "dataset", "network"]) {
+      const sel = $("grp_" + g);
+      if (sel && sel.value) parts.push(`${g}=${sel.value}`);
+    }
+    const exp = $("grp_experiment");
+    if (exp && exp.value) parts.push(`experiment=${exp.value}`);
+    return parts;
+  }
+
+  function addCfgRow(container, path, value) {
+    const row = document.createElement("div");
+    row.className = "cfg-row";
+    const label = document.createElement("label");
+    label.textContent = path.includes(".") ? path.split(".").slice(1).join(".") : path;
+    label.title = path;
+    let input;
+    if (typeof value === "boolean") {
+      input = document.createElement("input"); input.type = "checkbox"; input.checked = value;
+    } else {
+      input = document.createElement("input"); input.type = "text"; input.value = leafToStr(value); input.spellcheck = false;
+    }
+    input.dataset.path = path;
+    cfgBaseline[path] = typeof value === "boolean" ? String(value) : leafToStr(value);
+    const onEdit = () => {
+      const cur = input.type === "checkbox" ? String(input.checked) : input.value;
+      input.classList.toggle("changed", cur !== cfgBaseline[path]);
+    };
+    input.addEventListener("input", onEdit);
+    input.addEventListener("change", onEdit);
+    row.append(label, input);
+    container.appendChild(row);
+  }
+
+  function addCfgRows(container, obj, path) {
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj) || Object.keys(obj).length === 0) {
+      addCfgRow(container, path, obj);
+      return;
+    }
+    for (const [k, v] of Object.entries(obj)) addCfgRows(container, v, path + "." + k);
+  }
+
+  $("btnCompose").addEventListener("click", async () => {
+    const params = new URLSearchParams();
+    for (const p of groupOverrides()) params.append("override", p);
+    const res = await fetch("/api/config?" + params);
+    if (!res.ok) { addLog(`[UI] compose失敗: ${(await res.json()).detail}`); return; }
+    const cfg = await res.json();
+    const form = $("cfgForm");
+    form.innerHTML = "";
+    cfgBaseline = {};
+    for (const [section, val] of Object.entries(cfg)) {
+      const det = document.createElement("details");
+      det.open = section === "main" || section === "trainer";
+      const sum = document.createElement("summary");
+      sum.textContent = section;
+      det.appendChild(sum);
+      if (val === null || typeof val !== "object") addCfgRow(det, section, val);
+      else addCfgRows(det, val, section);
+      form.appendChild(det);
+    }
+    $("btnApply").disabled = false;
+  });
+
+  $("btnApply").addEventListener("click", () => {
+    const parts = groupOverrides();
+    for (const input of $("cfgForm").querySelectorAll("[data-path]")) {
+      const path = input.dataset.path;
+      const cur = input.type === "checkbox" ? String(input.checked) : input.value.trim();
+      if (cur === cfgBaseline[path]) continue;
+      parts.push(`${path}=${quoteVal(cur)}`);
+    }
+    $("overrides").value = parts.join(" ");
+    cfgModal.hidden = true;
+    addLog("[UI] Config Editorからオーバーライドを生成したよ: " + parts.join(" "));
+  });
+
+  $("btnCloseCfg").addEventListener("click", () => { cfgModal.hidden = true; });
+  cfgModal.addEventListener("click", e => { if (e.target === cfgModal) cfgModal.hidden = true; });
 
   // ---------- clock ----------
   function tickClock() { $("clock").textContent = new Date().toTimeString().slice(0, 8); }

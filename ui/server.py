@@ -16,13 +16,24 @@ import time
 from collections import deque
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from hydra import compose, initialize_config_dir
+from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
 from pydantic import BaseModel
+
+from modules.config import Config
 
 ROOT = Path(__file__).resolve().parent.parent
 IMAGE_DIR = ROOT / "image_logs"
 METRICS_PATH = ROOT / "ui" / "run_metrics.jsonl"
+CONF_DIR = ROOT / "conf"
+CONFIG_GROUPS = ["model", "trainer", "dataset", "network", "experiment"]
+
+# main.pyと同じスキーマ登録(conf/config.yamlのdefaults先頭のbase_schemaが解決できるように)
+ConfigStore.instance().store(name="base_schema", node=Config)
+_compose_lock = threading.Lock()
 
 app = FastAPI(title="sd-trainer mission control")
 
@@ -234,6 +245,28 @@ def dataset_info(path: str, caption: str = "captions", latent: str = "latents", 
         p = d / sub  # 絶対パスを指定した場合はそちらが優先される(pathlibの/演算子の仕様)
         info[key] = len(list(p.glob(pattern))) if p.exists() else 0
     return info
+
+
+@app.get("/api/config/groups")
+def config_groups():
+    # conf/配下の構成グループと選択肢(yamlファイル名)を返す
+    out = {}
+    for group in CONFIG_GROUPS:
+        p = CONF_DIR / group
+        out[group] = sorted(f.stem for f in p.glob("*.yaml")) if p.exists() else []
+    return out
+
+
+@app.get("/api/config")
+def config_compose(override: list[str] = Query(default=[])):
+    # 指定オーバーライドでHydra configを合成して返す(Config Editorのベースライン用)
+    with _compose_lock:
+        try:
+            with initialize_config_dir(config_dir=str(CONF_DIR), version_base="1.3"):
+                cfg = compose(config_name="config", overrides=override)
+        except Exception as e:
+            raise HTTPException(400, f"composeに失敗したよ: {e}")
+    return OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False)
 
 
 @app.websocket("/ws")
