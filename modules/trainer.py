@@ -1,5 +1,7 @@
+import math
 import torch
 import torch.nn as nn
+import wandb
 from torchvision import transforms
 from modules.text import BaseTextOutput
 from modules.utils import get_attr_from_config, load_model
@@ -52,7 +54,10 @@ class BaseTrainer:
                 )
 
         if config is not None and config.step_range is not None:
+            logger.info("step_rangeは非推奨だよ。min_t/max_tを使ってね。")
             self.min_t, self.max_t = map(float, config.step_range.split(","))
+        elif config is not None:
+            self.min_t, self.max_t = config.min_t, config.max_t
         else:
             self.min_t, self.max_t = 0.0, None
 
@@ -301,8 +306,8 @@ class BaseTrainer:
         )
 
     def prepare_optimizer(self):
-        lrs = [float(lr) for lr in self.config.lr.split(",")]
-        unet_lr, text_lr = lrs[0], lrs[-1]
+        unet_lr = float(self.config.lr)
+        text_lr = float(self.config.text_lr) if self.config.text_lr is not None else unet_lr
         logger.info(f"UNetの学習率は{unet_lr}、text_encoderの学習率は{text_lr}にしてみた！")
 
         params = []
@@ -329,7 +334,7 @@ class BaseTrainer:
         self.lr_scheduler = get_scheduler(
             self.config.lr_scheduler,
             optimizer=self.optimizer,
-            num_warmup_steps=int(0.05 * total_steps),
+            num_warmup_steps=int(self.config.lr_warmup_ratio * total_steps),
             num_training_steps=total_steps
         )
         logger.info(f"学習率スケジューラーは{self.lr_scheduler}にした！")
@@ -395,10 +400,67 @@ class BaseTrainer:
         logs = {"loss_ema":self.loss_ema, "samples_per_second":samples_per_second, "lr":self.lr_scheduler.get_last_lr()[0]}
 
         return logs
-    
+
+    def fit(self, dataloader, main_config):
+        # 学習ループ本体。事前にprepare_modules_for_training〜prepare_optimizerを済ませておくこと。
+        steps_per_epoch = len(dataloader)
+        total_steps = main_config.steps or steps_per_epoch * main_config.epochs
+        total_epochs = main_config.epochs or math.ceil(total_steps / steps_per_epoch)
+        logger.info(f"トータルのステップ数は{total_steps}だよ！")
+
+        self.prepare_lr_scheduler(total_steps)
+
+        save_interval = main_config.save_steps or main_config.save_epochs * steps_per_epoch
+        sample_interval = main_config.sample_steps or main_config.sample_epochs * steps_per_epoch
+        logger.info(f"モデルを{save_interval}ステップごとにセーブするよ！")
+        logger.info(f"サンプルは{sample_interval}ステップごとに生成するよ！")
+
+        if main_config.wandb is not None:
+            wandb_run = wandb.init(project=main_config.wandb, name=main_config.output_path, dir="wandb")
+        else:
+            wandb_run = None
+
+        progress_bar = tqdm(total=total_steps, desc="Training")
+        current_step = 0
+        dataset = dataloader.dataset
+
+        for epoch in range(total_epochs):
+            # バッチの組み分けをエポックごとに変える(DataLoaderのworker起動前に本体側で行う必要がある)
+            if epoch > 0 and getattr(dataset, "shuffle", False):
+                dataset.init_batch_samples()
+            for batch in dataloader:
+                logs = self.step(batch)
+
+                progress_bar.update(1)
+                progress_bar.set_postfix(logs)
+                if wandb_run is not None:
+                    wandb_run.log(logs, step=current_step)
+
+                if current_step % save_interval == 0 or current_step == total_steps - 1:
+                    self.save_model(main_config.output_path)
+                if current_step % sample_interval == 0 or current_step == total_steps - 1:
+                    images = self.sample_validation()
+                    if wandb_run is not None:
+                        images = [wandb.Image(image, caption=self.config.validation_args.prompt) for image in images]
+                        wandb_run.log({'images': images}, step=current_step)
+                    else:
+                        os.makedirs("image_logs", exist_ok=True)
+                        for i, image in enumerate(images):
+                            image.save(f"image_logs/{current_step}_{i}.png")
+
+                current_step += 1
+
+                if current_step == total_steps:
+                    logger.info("トレーニングが終わったよ！")
+                    if wandb_run is not None:
+                        wandb_run.finish()
+                    return
+
+            logger.info(f"エポック{epoch+1}が終わったよ！")
+
     def _resolve_prompt(self, prompt):
         # .txtファイルが指定された場合は中身をプロンプトとして読み込む
-        if prompt.split(".")[-1] == "txt":
+        if prompt.endswith(".txt"):
             with open(prompt, "r") as f:
                 return f.read()
         return prompt
@@ -543,7 +605,7 @@ class BaseTrainer:
         if self.controlnet_train:
             self.diffusion.controlnet.save_pretrained(os.path.join("trained/controlnet", output_path))
 
-    def sample_validation(self, step):
+    def sample_validation(self):
         logger.info(f"サンプルを生成するよ！")
         images = []
         torch.cuda.empty_cache()

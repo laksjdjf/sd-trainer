@@ -39,10 +39,14 @@ class TrainerConfig:
     weight_dtype: str = MISSING
     autocast_dtype: Optional[str] = None
     vae_dtype: Optional[str] = None
-    lr: str = MISSING
+    lr: float = MISSING
+    text_lr: Optional[float] = None  # Noneならlrと同じ
     lr_scheduler: str = "constant"
+    lr_warmup_ratio: float = 0.05
     noise_offset: float = 0.0
-    step_range : Optional[str] = None
+    min_t: float = 0.0  # 学習に使うtimestepの範囲(0~1)
+    max_t: Optional[float] = None
+    step_range : Optional[str] = None  # 旧形式"min,max"(非推奨)。指定時はmin_t/max_tを上書きする
     gradient_checkpointing: bool = False
     convrot: Optional[str] = None  # None | "forward"(int8+ConvRot fwd) | "backward"(fwd+bwd)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)

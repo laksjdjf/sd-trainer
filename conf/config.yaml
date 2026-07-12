@@ -28,7 +28,7 @@ trainer:
   weight_dtype: torch.bfloat16
   autocast_dtype: torch.bfloat16
   vae_dtype: torch.bfloat16
-  lr: "1e-3"
+  lr: 1e-3
   lr_scheduler: cosine
   validation_num_samples: 2
   validation_seed: 4545
