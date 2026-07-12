@@ -76,7 +76,8 @@ class ModelSpec:
     supports_save_pretrained: bool = False
 
     # 標準ローダー (_load_standard) 用パラメータ。カスタムローダーを使うspec (sd1/sdxl/anima)
-    # では未使用でよい。
+    # のロードでは未使用だが、text_model_cls / vae_cls / text_extra_args は
+    # preprocessパッケージのVAE・テキストモデル単体ロードでも参照するため設定しておく。
     text_model_cls: type = None
     # 通常は diffusers の transformer クラスそのもの。hdm だけは外部パッケージへの
     # 遅延importが必要なため、zero-arg callable (呼び出すとクラスを返す) を入れる。
@@ -281,6 +282,9 @@ MODEL_SPECS: dict = {
         input_channels=4,
         default_clip_skip=-1,
         supports_save_pretrained=True,
+        text_model_cls=SD1TextModel,
+        vae_cls=AutoencoderKL,
+        text_extra_args=("clip_skip",),
     ),
     "sdxl": ModelSpec(
         model_type="sdxl",
@@ -289,6 +293,9 @@ MODEL_SPECS: dict = {
         input_channels=4,
         default_clip_skip=-2,
         supports_save_pretrained=True,
+        text_model_cls=SDXLTextModel,
+        vae_cls=AutoencoderKL,
+        text_extra_args=("clip_skip",),
     ),
     "sd3": ModelSpec(
         model_type="sd3",
@@ -409,6 +416,7 @@ MODEL_SPECS: dict = {
         input_channels=16,
         default_clip_skip=-1,
         supports_save_pretrained=False,
+        vae_cls=AutoencoderKLQwenImage,  # text_model_clsは複合構成のため単体ロード未対応
     ),
 }
 
