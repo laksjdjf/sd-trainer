@@ -217,20 +217,21 @@ def status():
 
 
 @app.get("/api/dataset")
-def dataset_info(path: str):
-    # データセットディレクトリを走査してパイプラインの充足状況を返す
+def dataset_info(path: str, caption: str = "captions", latent: str = "latents", text_emb: str = "text_emb"):
+    # データセットディレクトリを走査してパイプラインの充足状況を返す。
+    # サブディレクトリ名はBaseDatasetのデフォルトと同じで、クエリパラメータで変更できる。
     d = Path(path)
     if not d.exists():
         raise HTTPException(404, f"{path} が見つからないよ")
-    info = {"path": path}
+    info = {"path": path, "dirs": {"caption": caption, "latent": latent, "text_emb": text_emb}}
     buckets_path = d / "buckets.json"
     if buckets_path.exists():
         with open(buckets_path) as f:
             buckets = json.load(f)
         info["buckets"] = {"num_buckets": len(buckets), "num_images": sum(len(v) for v in buckets.values())}
     info["images"] = len(list(d.glob("*.png")))
-    for key, sub, pattern in [("captions", "captions", "*.caption"), ("latents", "latents", "*.npy"), ("text_emb", "text_emb", "*.npz")]:
-        p = d / sub
+    for key, sub, pattern in [("captions", caption, "*.caption"), ("latents", latent, "*.npy"), ("text_emb", text_emb, "*.npz")]:
+        p = d / sub  # 絶対パスを指定した場合はそちらが優先される(pathlibの/演算子の仕様)
         info[key] = len(list(p.glob(pattern))) if p.exists() else 0
     return info
 
