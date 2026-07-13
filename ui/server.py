@@ -217,6 +217,25 @@ def train_stop():
     return {"ok": True}
 
 
+def _signal_main_process(sig):
+    # dataloaderのworker(デフォルトのSIGUSRで死ぬ)を巻き込まないよう、グループではなく本体だけに送る
+    if proc is None or proc.poll() is not None:
+        raise HTTPException(409, "not running")
+    os.kill(proc.pid, sig)
+
+
+@app.post("/api/train/sample")
+def train_sample():
+    _signal_main_process(signal.SIGUSR1)
+    return {"ok": True}
+
+
+@app.post("/api/train/save")
+def train_save():
+    _signal_main_process(signal.SIGUSR2)
+    return {"ok": True}
+
+
 @app.get("/api/status")
 def status():
     return {
@@ -227,14 +246,13 @@ def status():
     }
 
 
-@app.get("/api/dataset")
-def dataset_info(path: str, caption: str = "captions", latent: str = "latents", text_emb: str = "text_emb"):
+def _scan_dataset(path, caption="captions", latent="latents", text_emb="text_emb"):
     # データセットディレクトリを走査してパイプラインの充足状況を返す。
-    # サブディレクトリ名はBaseDatasetのデフォルトと同じで、クエリパラメータで変更できる。
+    # サブディレクトリ名はBaseDatasetのデフォルトと同じ。
     d = Path(path)
     if not d.exists():
         raise HTTPException(404, f"{path} が見つからないよ")
-    info = {"path": path, "dirs": {"caption": caption, "latent": latent, "text_emb": text_emb}}
+    info = {"path": str(path), "dirs": {"caption": caption, "latent": latent, "text_emb": text_emb}}
     buckets_path = d / "buckets.json"
     if buckets_path.exists():
         with open(buckets_path) as f:
@@ -244,6 +262,39 @@ def dataset_info(path: str, caption: str = "captions", latent: str = "latents", 
     for key, sub, pattern in [("captions", caption, "*.caption"), ("latents", latent, "*.npy"), ("text_emb", text_emb, "*.npz")]:
         p = d / sub  # 絶対パスを指定した場合はそちらが優先される(pathlibの/演算子の仕様)
         info[key] = len(list(p.glob(pattern))) if p.exists() else 0
+    return info
+
+
+@app.get("/api/dataset")
+def dataset_info(path: str, caption: str = "captions", latent: str = "latents", text_emb: str = "text_emb"):
+    return _scan_dataset(path, caption, latent, text_emb)
+
+
+@app.get("/api/pipeline")
+def pipeline_info(override: list[str] = Query(default=[])):
+    # LAUNCHのオーバーライドでconfigを合成し、学習が実際に使うデータセットを走査する
+    with _compose_lock:
+        try:
+            with initialize_config_dir(config_dir=str(CONF_DIR), version_base="1.3"):
+                cfg = compose(config_name="config", overrides=override)
+        except Exception as e:
+            raise HTTPException(400, f"composeに失敗したよ: {e}")
+    args = OmegaConf.to_container(cfg.dataset.args, resolve=True) if cfg.dataset.args is not None else {}
+    path = args.get("path")
+    if not path:
+        raise HTTPException(400, "dataset.args.path が設定されてないよ")
+    info = _scan_dataset(
+        path,
+        caption=args.get("caption", "captions") or "captions",
+        latent=args.get("latent", "latents") or "latents",
+        text_emb=args.get("text_emb") or "text_emb",
+    )
+    # configが実際にどのソースを使うか(BaseDatasetのデフォルトに準拠)
+    info["uses"] = {
+        "images": args.get("image") is not None,
+        "latents": args.get("latent", "latents") is not None and args.get("image") is None,
+        "text_emb": args.get("text_emb") is not None,
+    }
     return info
 
 

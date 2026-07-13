@@ -63,9 +63,7 @@
   .field label { display: block; font-family: var(--font-display); font-size: 10px; letter-spacing: 0.2em; color: var(--muted); margin-bottom: 4px; }
   .field input { width: 100%; background: #0b122680; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink); font-family: var(--font-mono); font-size: 12px; padding: 7px 9px; }
   .field input:focus-visible { outline: none; border-color: var(--cyan); box-shadow: 0 0 8px #5fd9e833; }
-  .subfields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .subfields .field { margin-bottom: 6px; }
-  .subfields input { padding: 5px 7px; font-size: 11px; }
+  .dspath { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   button.ctl { font-family: var(--font-display); letter-spacing: 0.16em; font-size: 12px; background: #0b122650; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 4px; padding: 9px 14px; cursor: pointer; }
   button.ctl:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); box-shadow: 0 0 10px #ffb45433; }
   button.ctl:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
@@ -178,19 +176,10 @@
 
     <section class="panel">
       <div class="eyebrow">Pipeline</div>
-      <div class="field">
-        <label for="dsPath">DATASET DIR</label>
-        <input id="dsPath" value="dataset" spellcheck="false">
+      <div class="controls" style="margin:0 0 6px">
+        <button class="ctl" id="btnSync" title="LAUNCHのオーバーライドでconfigを合成して、学習が使うデータセットを確認">⟳ SYNC</button>
       </div>
-      <div class="subfields">
-        <div class="field"><label for="dirCaption">CAPTIONS</label><input id="dirCaption" value="captions" spellcheck="false"></div>
-        <div class="field"><label for="dirLatent">LATENTS</label><input id="dirLatent" value="latents" spellcheck="false"></div>
-        <div class="field"><label for="dirTextEmb">TEXT EMB</label><input id="dirTextEmb" value="text_emb" spellcheck="false"></div>
-      </div>
-      <div class="controls" style="margin:0 0 8px">
-        <button class="ctl" id="btnScan">⌕ SCAN</button>
-        <button class="ctl" id="btnToOverrides" disabled title="スキャン結果をLAUNCHのオーバーライドに反映">→ OVERRIDES</button>
-      </div>
+      <div class="dspath" id="dsPathChip" title="">dataset.args.path: —</div>
       <div class="stage" id="stImages"><span class="dot"></span><span class="name">IMAGES</span><span class="count">—</span></div>
       <div class="stage" id="stBuckets"><span class="dot"></span><span class="name">BUCKETS</span><span class="count">—</span></div>
       <div class="stage" id="stCaptions"><span class="dot"></span><span class="name">CAPTIONS</span><span class="count">—</span></div>
@@ -249,6 +238,8 @@
 
       <div class="controls">
         <button class="ctl" id="btnPause" disabled>⏸ PAUSE</button>
+        <button class="ctl" id="btnSample" disabled title="次のステップの切れ目でサンプル生成">✦ SAMPLE NOW</button>
+        <button class="ctl" id="btnSave" disabled title="次のステップの切れ目で保存">◈ SAVE NOW</button>
         <button class="ctl danger" id="btnStop" disabled>■ STOP</button>
       </div>
     </section>
@@ -371,6 +362,8 @@
     $("btnStart").disabled = running;
     $("btnPause").disabled = !running;
     $("btnStop").disabled = !running;
+    $("btnSample").disabled = s !== "training";
+    $("btnSave").disabled = s !== "training";
     $("btnPause").textContent = s === "paused" ? "▶ RESUME" : "⏸ PAUSE";
     $("stTrain").className = "stage" + (s === "training" ? " active" : (s === "finished" ? " done" : ""));
   }
@@ -484,57 +477,56 @@
     if (!res.ok) addLog(`[UI] ${path} failed: ${(await res.json()).detail || res.status}`);
     return res.ok;
   }
-  $("btnStart").addEventListener("click", () => {
+  function tokenizeOverrides() {
     // 引用符内の空白は区切らない(例: prompt="1girl, solo" は1トークン)
-    const overrides = $("overrides").value.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+    return $("overrides").value.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  }
+  $("btnStart").addEventListener("click", () => {
+    const overrides = tokenizeOverrides();
     window._overrides = overrides;
     post("/api/train/start", { overrides });
   });
   $("btnPause").addEventListener("click", () => post(status === "paused" ? "/api/train/resume" : "/api/train/pause"));
   $("btnStop").addEventListener("click", () => post("/api/train/stop"));
+  $("btnSample").addEventListener("click", async () => {
+    if (await post("/api/train/sample")) addLog("[UI] サンプル生成をリクエストしたよ(次のステップの切れ目で実行)");
+  });
+  $("btnSave").addEventListener("click", async () => {
+    if (await post("/api/train/save")) addLog("[UI] 保存をリクエストしたよ(次のステップの切れ目で実行)");
+  });
 
-  // ---------- dataset scan ----------
-  let lastScan = null;
-  $("btnScan").addEventListener("click", async () => {
-    const params = new URLSearchParams({
-      path: $("dsPath").value.trim(),
-      caption: $("dirCaption").value.trim() || "captions",
-      latent: $("dirLatent").value.trim() || "latents",
-      text_emb: $("dirTextEmb").value.trim() || "text_emb",
-    });
-    const res = await fetch("/api/dataset?" + params);
-    if (!res.ok) { addLog(`[UI] dataset scan failed: ${(await res.json()).detail}`); return; }
-    const d = await res.json();
-    lastScan = d;
-    $("btnToOverrides").disabled = false;
-    const set = (id, count, done) => {
+  // ---------- pipeline sync ----------
+  // LAUNCHのオーバーライドでconfigを合成し、学習が実際に使うデータセットの充足状況を表示する
+  async function syncPipeline(quiet) {
+    const params = new URLSearchParams();
+    for (const t of tokenizeOverrides()) params.append("override", t);
+    const setStage = (id, count, done) => {
       const el = $(id);
       el.querySelector(".count").textContent = count;
       el.className = "stage" + (done ? " done" : "");
     };
+    const res = await fetch("/api/pipeline?" + params);
+    if (!res.ok) {
+      for (const id of ["stImages", "stBuckets", "stCaptions", "stLatents", "stTextEmb"]) setStage(id, "—", false);
+      $("dsPathChip").textContent = "dataset.args.path: —";
+      if (!quiet) addLog(`[UI] pipeline sync失敗: ${(await res.json()).detail}`);
+      return;
+    }
+    const d = await res.json();
+    $("dsPathChip").textContent = "dataset.args.path: " + d.path;
+    $("dsPathChip").title = d.path;
     const n = d.buckets ? d.buckets.num_images : d.images;
-    set("stImages", d.images + "枚", d.images > 0);
-    set("stBuckets", d.buckets ? d.buckets.num_buckets + " bkt" : "—", !!d.buckets);
-    set("stCaptions", `${d.captions}/${n}`, d.captions >= n && n > 0);
-    set("stLatents", `${d.latents}/${n}`, d.latents >= n && n > 0);
-    set("stTextEmb", `${d.text_emb}/${n}`, d.text_emb >= n && n > 0);
-    addLog(`[UI] データセットをスキャンしたよ: ${d.path} (${d.images}枚)`);
-  });
-
-  // スキャン結果をHydraオーバーライドへ反映する。latent/text_embはキャッシュが
-  // 全画像分揃っているときだけ指定する(不完全キャッシュや、text_emb指定による
-  // caption→キャッシュ学習への意図しない切り替えを防ぐ)
-  $("btnToOverrides").addEventListener("click", () => {
-    if (!lastScan) return;
-    const n = lastScan.buckets ? lastScan.buckets.num_images : lastScan.images;
-    const parts = [`dataset.args.path=${lastScan.path}`, `++dataset.args.caption=${lastScan.dirs.caption}`];
-    if (n > 0 && lastScan.latents >= n) parts.push(`++dataset.args.latent=${lastScan.dirs.latent}`);
-    if (n > 0 && lastScan.text_emb >= n) parts.push(`++dataset.args.text_emb=${lastScan.dirs.text_emb}`);
-    const ov = $("overrides");
-    const kept = ov.value.trim().split(/\s+/).filter(p => p && !/^(\+*)dataset\.args\./.test(p));
-    ov.value = kept.concat(parts).join(" ");
-    addLog("[UI] データセット設定をオーバーライドに反映したよ: " + parts.join(" "));
-  });
+    const mark = used => used ? "" : " (未使用)";
+    setStage("stImages", d.images + "枚", d.images > 0);
+    setStage("stBuckets", d.buckets ? d.buckets.num_buckets + " bkt" : "—", !!d.buckets);
+    setStage("stCaptions", `${d.captions}/${n}` + mark(!d.uses.text_emb), d.captions >= n && n > 0);
+    setStage("stLatents", `${d.latents}/${n}` + mark(d.uses.latents), d.latents >= n && n > 0);
+    setStage("stTextEmb", `${d.text_emb}/${n}` + mark(d.uses.text_emb), d.text_emb >= n && n > 0);
+    if (!quiet) addLog(`[UI] パイプラインを同期したよ: ${d.path} (${d.images}枚)`);
+  }
+  $("btnSync").addEventListener("click", () => syncPipeline(false));
+  $("overrides").addEventListener("change", () => syncPipeline(true));
+  syncPipeline(true);
 
   // ---------- config editor ----------
   const cfgModal = $("cfgModal");
@@ -650,6 +642,7 @@
     $("overrides").value = parts.join(" ");
     cfgModal.hidden = true;
     addLog("[UI] Config Editorからオーバーライドを生成したよ: " + parts.join(" "));
+    syncPipeline(true);
   });
 
   $("btnCloseCfg").addEventListener("click", () => { cfgModal.hidden = true; });

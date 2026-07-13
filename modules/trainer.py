@@ -1,4 +1,5 @@
 import math
+import signal
 import torch
 import torch.nn as nn
 import wandb
@@ -420,6 +421,15 @@ class BaseTrainer:
         write_metrics({"event": "start", "total_steps": total_steps, "total_epochs": total_epochs,
                        "output_path": main_config.output_path, "time": time.time()})
 
+        # UIからの割り込み要求(SIGUSR1=いますぐサンプル生成, SIGUSR2=いますぐ保存)。
+        # ステップの切れ目で処理する。Windowsや非メインスレッドでは黙って無効になる。
+        requests = {"sample": False, "save": False}
+        try:
+            signal.signal(signal.SIGUSR1, lambda *_: requests.__setitem__("sample", True))
+            signal.signal(signal.SIGUSR2, lambda *_: requests.__setitem__("save", True))
+        except (AttributeError, ValueError):
+            pass
+
         self.prepare_lr_scheduler(total_steps)
 
         save_interval = main_config.save_steps or main_config.save_epochs * steps_per_epoch
@@ -449,10 +459,12 @@ class BaseTrainer:
                     wandb_run.log(logs, step=current_step)
                 write_metrics({"event": "step", "step": current_step, "epoch": epoch, "time": time.time(), **logs})
 
-                if current_step % save_interval == 0 or current_step == total_steps - 1:
+                if current_step % save_interval == 0 or current_step == total_steps - 1 or requests["save"]:
+                    requests["save"] = False
                     self.save_model(main_config.output_path)
                     write_metrics({"event": "save", "step": current_step, "time": time.time()})
-                if current_step % sample_interval == 0 or current_step == total_steps - 1:
+                if current_step % sample_interval == 0 or current_step == total_steps - 1 or requests["sample"]:
+                    requests["sample"] = False
                     images = self.sample_validation()
                     if wandb_run is not None:
                         images = [wandb.Image(image, caption=self.config.validation_args.prompt) for image in images]

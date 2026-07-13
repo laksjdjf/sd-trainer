@@ -6,12 +6,19 @@ import json
 import math
 import os
 import random
+import signal
 import time
 
 from PIL import Image, ImageDraw
 
 TOTAL = int(os.environ.get("FAKE_TOTAL", 600))
 SAMPLE_EVERY = TOTAL // 5
+
+# 本物のtrainer.fit()と同じシグナル対応(SIGUSR1=サンプル生成, SIGUSR2=保存)
+REQUESTS = {"sample": False, "save": False}
+if hasattr(signal, "SIGUSR1"):
+    signal.signal(signal.SIGUSR1, lambda *_: REQUESTS.__setitem__("sample", True))
+    signal.signal(signal.SIGUSR2, lambda *_: REQUESTS.__setitem__("save", True))
 
 
 def write_metrics(f, record):
@@ -51,7 +58,8 @@ def main():
         logs = {"loss_ema": round(loss_ema, 5), "samples_per_second": round(2.4 + random.random() * 0.3, 2), "lr": lr}
         write_metrics(f, {"event": "step", "step": step, "epoch": step * 24 // TOTAL, "time": time.time(), **logs})
 
-        if step % SAMPLE_EVERY == 0 or step == TOTAL - 1:
+        if step % SAMPLE_EVERY == 0 or step == TOTAL - 1 or REQUESTS["sample"]:
+            REQUESTS["sample"] = False
             print("サンプルを生成するよ！")
             files = []
             for i in range(2):
@@ -59,6 +67,8 @@ def main():
                 fake_image(step, i).save(f"image_logs/{name}")
                 files.append(name)
             write_metrics(f, {"event": "sample", "step": step, "files": files, "time": time.time()})
+        if step % SAMPLE_EVERY == 0 or step == TOTAL - 1 or REQUESTS["save"]:
+            REQUESTS["save"] = False
             print("モデルを保存します！")
             write_metrics(f, {"event": "save", "step": step, "time": time.time()})
 

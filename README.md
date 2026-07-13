@@ -40,10 +40,13 @@ uv run python -m preprocess masks -d dataset -o dataset/mask      # 顔マスク
 uv run uvicorn ui.server:app --port 7860
 ```
 
-- Hydraオーバーライドを指定して学習をSTART、PAUSE(SIGSTOP)/STOP(SIGTERM)もUIから
+- Config Editor: 構成グループを選んで合成された全設定をフォーム編集、差分だけをオーバーライド化
+- 学習をSTART、PAUSE(SIGSTOP)/STOP(SIGTERM)に加え、SAMPLE NOW(SIGUSR1)/
+  SAVE NOW(SIGUSR2)でステップの切れ目に割り込みでサンプル生成・保存
 - loss EMA・lr・samples/s・ETA・進捗・GPU(VRAM/使用率)をWebSocketでリアルタイム表示
 - validationサンプル画像(`image_logs/`)のギャラリーとログのイベントフィード
-- データセットディレクトリをSCANするとキャッシュ(caption/latent/text_emb)の充足状況を表示
+- PIPELINE: オーバーライドから合成したconfigが実際に使うデータセットを自動スキャンし、
+  キャッシュ(caption/latent/text_emb)の充足状況を表示
 
 メトリクスは環境変数 `SD_TRAINER_METRICS` にパスが設定されたときだけ
 `trainer.fit()` がJSONLで書き出す(UIサーバーが自動設定。通常のCLI実行には影響なし)。
