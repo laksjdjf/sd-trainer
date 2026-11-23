@@ -7,11 +7,9 @@ dependencies = [
     "torch>=2.11,<2.12",
     "torchvision",
     "xformers>=0.0.35",
-    # transformers 5.x のCLIPTextModelフラット化への対応がリリース版(0.38.0)に
-    # 未収録のため、修正済みのgit mainを使う(uv.lockでコミット固定)。
-    # 0.39リリース後はPyPI版に戻してよい
+    # Qwen-Image-2.1 requires Diffusers git main; uv.lock pins the tested commit.
     "diffusers",
-    "transformers>=5,<6",
+    "transformers>=5.17,<6",
     "accelerate",
     "safetensors",
     "omegaconf",

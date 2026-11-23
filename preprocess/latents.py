@@ -24,11 +24,14 @@ def load_vae(model_type, model_path, dtype, revision=None):
 
 
 @torch.no_grad()
-def _encode_batch(vae, image_tensors, video):
+def _encode_batch(vae, image_tensors, video, moss_image=False):
     x = torch.stack(image_tensors)
     if video:  # animaのようなvideoモデルは時間次元を付与する
         x = x.unsqueeze(2)
     latents = vae.encode(x).latent_dist.sample()
+    if moss_image:
+        from modules.moss_image_latents import patchify
+        latents = patchify(latents)
     assert_not_nan(latents)
     return latents.float().cpu().numpy()
 
@@ -62,7 +65,8 @@ def encode_latents(
 ):
     dtype = parse_dtype(dtype)
     vae = load_vae(model_type, model_path, dtype, revision)
-    video = model_type == "anima"
+    spec = get_model_spec(model_type)
+    video = spec.video_vae
 
     to_tensor_norm = transforms.Compose([
         transforms.ToTensor(),
@@ -81,9 +85,9 @@ def encode_latents(
 
     for batch in progress_iter(batches, total=len(batches), desc=f"latents ({total} files)", on_progress=on_progress):
         image_tensors = [
-            to_tensor_norm(Image.open(os.path.join(directory, sample + ".png")).convert("RGB")).to("cuda", dtype=dtype)
+            to_tensor_norm(Image.open(os.path.join(directory, sample + ".png")).convert(spec.image_mode)).to("cuda", dtype=dtype)
             for sample in batch
         ]
-        latents = _encode_batch(vae, image_tensors, video)
+        latents = _encode_batch(vae, image_tensors, video, moss_image=model_type == "moss_image")
         for i, sample in enumerate(batch):
             np.save(os.path.join(output_dir, sample + ".npy"), latents[i])

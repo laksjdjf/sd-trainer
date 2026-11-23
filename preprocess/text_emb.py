@@ -50,9 +50,12 @@ def encode_text(
                 batch_texts.append(f.read())
 
         text_output = model(batch_texts)
-        encoder_hidden_states = text_output.encoder_hidden_states.float().cpu().numpy().astype(save_dtype)
-        pooled_outputs = text_output.pooled_output.float().cpu().numpy().astype(save_dtype)
-
-        for file, encoder_hidden_state, pooled_output in zip(batch_files, encoder_hidden_states, pooled_outputs):
+        for i, file in enumerate(batch_files):
+            hidden = text_output.encoder_hidden_states[i]
+            values = {"encoder_hidden_state": hidden.float().cpu().numpy().astype(save_dtype)}
+            if text_output.pooled_output is not None:
+                values["pooled_output"] = text_output.pooled_output[i].float().cpu().numpy().astype(save_dtype)
+            if text_output.attention_mask is not None:
+                values["attention_mask"] = text_output.attention_mask[i].bool().cpu().numpy()
             output_path = os.path.join(output_dir, os.path.splitext(file)[0] + ".npz")
-            np.savez(output_path, encoder_hidden_state=encoder_hidden_state, pooled_output=pooled_output)
+            np.savez(output_path, **values)

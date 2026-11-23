@@ -1,0 +1,19 @@
+# @package _global_
+main:
+  model_type: qwenimage21
+  model_path: Qwen/Qwen-Image-2.1
+trainer:
+  te_device: cuda
+  vae_device: cpu
+  gradient_checkpointing: true
+  lr: 1e-4
+  validation_args:
+    width: 1024
+    height: 1024
+    guidance_scale: 1.0
+    num_inference_steps: 40
+dataset:
+  args:
+    model_type: qwenimage21
+    latent: latents_qwenimage21
+    text_emb: null

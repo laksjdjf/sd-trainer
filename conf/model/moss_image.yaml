@@ -1,0 +1,21 @@
+# @package _global_
+main:
+  model_type: moss_image
+  model_path: OpenMOSS-Team/MOSS-Image-Base
+trainer:
+  te_device: cpu
+  vae_device: cpu
+  vae_dtype: torch.float32
+  gradient_checkpointing: true
+  lr: 1e-4
+  validation_args:
+    width: 1024
+    height: 1024
+    guidance_scale: 3.0
+    num_inference_steps: 50
+    negative_prompt: ""
+dataset:
+  args:
+    model_type: moss_image
+    latent: latents_moss_image
+    text_emb: text_emb_moss_image

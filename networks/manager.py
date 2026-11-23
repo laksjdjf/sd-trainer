@@ -11,9 +11,11 @@ logger = logging.getLogger("ネットワークちゃん")
 
 UNET_TARGET_REPLACE_MODULE_TRANSFORMER = ["Transformer2DModel"]
 UNET_TARGET_REPLACE_MODULE_ATTENTION = ["Transformer2DModel"]
-MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock", "AuraFlowJointTransformerBlock", "AuraFlowSingleTransformerBlock", "Lumina2TransformerBlock", "TransformerBlock", "ZImageTransformerBlock", "Flux2TransformerBlock", "CosmosTransformerBlock"]
+MMDIT_TARGET_REPLACE_MODULE = ["JointTransformerBlock", "FluxTransformerBlock", "FluxSingleTransformerBlock", "AuraFlowJointTransformerBlock", "AuraFlowSingleTransformerBlock", "Lumina2TransformerBlock", "TransformerBlock", "ZImageTransformerBlock", "Flux2TransformerBlock", "CosmosTransformerBlock", "QwenImage21TransformerBlock"]
 UNET_TARGET_REPLACE_MODULE_CONV = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
 TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
+# MOSS's main DiT blocks and two text-refinement blocks (official class names).
+MMDIT_TARGET_REPLACE_MODULE += ["_Block", "_TextBlock"]
 LORA_PREFIX_UNET = 'lora_unet'
 LORA_PREFIX_MMDIT = 'lora_transformer'
 LORA_PREFIX_TEXT_ENCODER = 'lora_te'

@@ -19,6 +19,8 @@ from diffusers import (
     AutoencoderKLFlux2,
     AutoencoderKLHunyuanVideo,
     AutoencoderKLQwenImage,
+    AutoencoderKLQwenImage21,
+    QwenImage21Transformer2DModel,
     AutoencoderTiny,
     CosmosTransformer3DModel,
     DDPMScheduler,
@@ -61,6 +63,13 @@ from modules.text import (
     ZImageTextModel,
 )
 from modules.scheduler import BaseScheduler, FlowScheduler
+from modules.diffusion.qwenimage21 import QwenImage21DiffusionModel
+from modules.text.qwenimage21 import QwenImage21TextModel
+from modules.qwenimage21_scheduler import QwenImage21Scheduler
+from modules.moss_image_model import MOSSImageTransformer, MOSSImageScheduler
+from modules.diffusion.moss_image import MOSSImageDiffusionModel
+from modules.text.moss_image import MOSSImageTextModel
+from modules.moss_image_scheduler import MOSSImageTrainingScheduler
 
 
 @dataclass
@@ -74,6 +83,9 @@ class ModelSpec:
     input_channels: int
     default_clip_skip: int = -1
     supports_save_pretrained: bool = False
+    latent_scale_factor: int = 8
+    image_mode: str = "RGB"
+    video_vae: bool = False
 
     # 標準ローダー (_load_standard) 用パラメータ。カスタムローダーを使うspec (sd1/sdxl/anima)
     # のロードでは未使用だが、text_model_cls / vae_cls / text_extra_args は
@@ -111,6 +123,13 @@ def _latent_stats_flux2_klein(vae):
     scaling_factor = 1 / torch.sqrt(vae.bn.running_var.view(1, -1, 4, 1, 1).mean(dim=2) + 1e-4)
     shift_factor = vae.bn.running_mean.view(1, -1, 4, 1, 1).mean(dim=2)
     return scaling_factor, shift_factor
+
+
+def _latent_stats_moss_image(vae):
+    # Keep all 128 patch-channel statistics; spatial averaging changes the model.
+    scale = (vae.bn.running_var.detach().float().cpu() + vae.config.batch_norm_eps).rsqrt().view(1, -1, 1, 1)
+    shift = vae.bn.running_mean.detach().float().cpu().view(1, -1, 1, 1)
+    return scale, shift
 
 
 def _latent_stats_anima(vae):
@@ -274,7 +293,43 @@ def _load_anima(spec, path, clip_skip, revision, torch_dtype, variant, nf4_confi
 # レジストリ本体
 # ---------------------------------------------------------------------------
 
+def _load_qwenimage21(spec, path, clip_skip, revision, torch_dtype, variant, nf4_config, taesd):
+    if taesd or nf4_config is not None:
+        raise ValueError("Qwen-Image-2.1 currently supports the original VAE and unquantized weights.")
+    result = _load_standard(spec, path, clip_skip, revision, torch_dtype, variant, None, False)
+    text_model, vae, diffusion, _, _ = result
+    sampling_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        path, subfolder="scheduler", revision=revision,
+    )
+    return text_model, vae, diffusion, sampling_scheduler, QwenImage21Scheduler(sampling_scheduler)
+
+
+def _load_moss_image(spec, path, clip_skip, revision, torch_dtype, variant, nf4_config, taesd):
+    if taesd or nf4_config is not None:
+        raise ValueError("MOSS-Image requires the original FLUX.2 VAE and unquantized weights.")
+    result = _load_standard(spec, path, clip_skip, revision, torch_dtype, variant, None, False)
+    text_model, vae, diffusion, _, _ = result
+    sampling_scheduler = MOSSImageScheduler.from_pretrained(path, subfolder="scheduler", revision=revision)
+    return text_model, vae, diffusion, sampling_scheduler, MOSSImageTrainingScheduler(sampling_scheduler)
+
+
 MODEL_SPECS: dict = {
+    "moss_image": ModelSpec(
+        model_type="moss_image", load=_load_moss_image,
+        latent_stats=_latent_stats_moss_image, input_channels=128,
+        latent_scale_factor=16, text_model_cls=MOSSImageTextModel,
+        unet_cls_name=MOSSImageTransformer, vae_cls=AutoencoderKLFlux2,
+        diffusion_cls=MOSSImageDiffusionModel, flow_shift=1.0,
+    ),
+    "qwenimage21": ModelSpec(
+        model_type="qwenimage21", load=_load_qwenimage21,
+        latent_stats=_latent_stats_anima, input_channels=64,
+        latent_scale_factor=16, image_mode="RGBA", video_vae=True,
+        text_model_cls=QwenImage21TextModel,
+        unet_cls_name=QwenImage21Transformer2DModel,
+        vae_cls=AutoencoderKLQwenImage21,
+        diffusion_cls=QwenImage21DiffusionModel, flow_shift=1.0,
+    ),
     "sd1": ModelSpec(
         model_type="sd1",
         load=_load_sd1,
@@ -411,6 +466,7 @@ MODEL_SPECS: dict = {
     ),
     "anima": ModelSpec(
         model_type="anima",
+        video_vae=True,
         load=_load_anima,
         latent_stats=_latent_stats_anima,
         input_channels=16,

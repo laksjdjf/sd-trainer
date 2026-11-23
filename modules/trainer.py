@@ -44,6 +44,19 @@ class BaseTrainer:
         spec = get_model_spec(model_type)
         self.scaling_factor, self.shift_factor = spec.latent_stats(vae)
         self.input_channels = spec.input_channels
+        self.video_vae = spec.video_vae
+        self.latent_scale_factor = spec.latent_scale_factor
+        self.image_mode = spec.image_mode
+        if model_type == "moss_image" and config is not None:
+            if config.train_unet or config.train_text_encoder:
+                raise ValueError("MOSS-Image currently supports transformer LoRA training only.")
+            if "float8" in config.weight_dtype or config.weight_dtype.split(".")[-1] == "float16":
+                raise ValueError("MOSS-Image requires bf16/fp32 weights.")
+        if model_type == "qwenimage21" and config is not None:
+            if config.train_unet or config.train_text_encoder:
+                raise ValueError("Qwen-Image-2.1 currently supports transformer LoRA training only.")
+            if "float8" in config.weight_dtype:
+                raise ValueError("Qwen-Image-2.1 FP8 weights are not verified; use bf16/fp32 weights.")
 
         if config is not None and config.merging_loras:
             for lora in config.merging_loras:
@@ -64,17 +77,27 @@ class BaseTrainer:
 
     def normalize_latents(self, latents):
         # VAE出力のlatentをモデル入力のスケールに変換する
+        if self.model_type == "moss_image":
+            from modules.moss_image_latents import patchify
+            if latents.ndim != 4 or latents.shape[1] not in (32, 128):
+                raise ValueError("MOSS-Image requires FLUX.2 latents (32 raw or 128 patch channels).")
+            if latents.shape[1] == 32:
+                latents = patchify(latents)
         return (latents - self.shift_factor) * self.scaling_factor
 
     def denormalize_latents(self, latents):
         # モデル出力のlatentをVAE入力のスケールに戻す(taesdはスケール込みのためそのまま)
         if self.taesd:
             return latents
-        return latents / self.scaling_factor + self.shift_factor
+        latents = latents / self.scaling_factor + self.shift_factor
+        if self.model_type == "moss_image":
+            from modules.moss_image_latents import unpatchify
+            latents = unpatchify(latents)
+        return latents
 
     def add_video_dim(self, tensor):
         # animaのようなvideoモデルでは画像テンソルに時間次元を付与する
-        if self.model_type == "anima" and tensor.dim() == 4:
+        if self.video_vae and tensor.dim() == 4:
             return tensor.unsqueeze(2)
         return tensor
 
@@ -84,16 +107,16 @@ class BaseTrainer:
             latents = self.add_video_dim(batch["latents"].to(self.device))
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype), torch.no_grad():
-                images = self.add_video_dim(batch["images"].to(self.device))
+                images = self.add_video_dim(batch["images"].to(self.vae.device, dtype=self.vae_dtype))
                 latents = self.vae.encode(images).latent_dist.sample()
-        return self.normalize_latents(latents)
+        return self.normalize_latents(latents.to(self.device))
 
     def text_output_from_batch(self, batch):
         # キャッシュ済みembeddingがあればそれを、なければキャプションをエンコードして返す
         if "encoder_hidden_states" in batch:
             encoder_hidden_states = batch["encoder_hidden_states"].to(self.device)
-            pooled_output = batch["pooled_outputs"].to(self.device)
-            return BaseTextOutput(encoder_hidden_states, pooled_output)
+            pooled_output = batch["pooled_outputs"].to(self.device) if "pooled_outputs" in batch else None
+            return BaseTextOutput(encoder_hidden_states, pooled_output, batch.get("attention_mask")).to(self.device)
         with torch.autocast("cuda", dtype=self.autocast_dtype):
             text_output = self.text_model(batch["captions"])
         return text_output.to(self.device)
@@ -113,7 +136,7 @@ class BaseTrainer:
         
         for i in range(latents.shape[0]):
             latent = latents[i].unsqueeze(0).to(self.vae_dtype)
-            if self.model_type == "anima":
+            if self.video_vae:
                 image = self.vae.decode(latent, return_dict=False)[0]
             elif len(latent.shape) == 4:
                 image = self.vae.decode(latent).sample
@@ -125,7 +148,7 @@ class BaseTrainer:
 
         self.vae.to(original_device)
 
-        if self.model_type == "anima" and len(images.shape) == 5:
+        if self.video_vae and len(images.shape) == 5:
             images = images[:, :, 0]
 
         if len(images.shape) == 5:
@@ -154,11 +177,11 @@ class BaseTrainer:
         )
         if isinstance(images[0], list):
             images = torch.stack([[to_tensor_norm(image) for image in video] for video in images]).to(self.vae.device, dtype=self.vae_dtype)
-            if self.model_type == "anima":
+            if self.video_vae:
                 images = images.permute(0, 2, 1, 3, 4)
         else:
-            images = torch.stack([to_tensor_norm(image) for image in images]).to(self.vae.device, dtype=self.vae_dtype)
-            if self.model_type == "anima":
+            images = torch.stack([to_tensor_norm(image.convert(self.image_mode)) for image in images]).to(self.vae.device, dtype=self.vae_dtype)
+            if self.video_vae:
                 images = images.unsqueeze(2)
         if not self.taesd:
             latents = self.vae.encode(images).latent_dist.sample()
@@ -281,6 +304,10 @@ class BaseTrainer:
             logger.info("コントロールネットはないみたい。")
             return
         
+        if self.model_type == "qwenimage21":
+            raise ValueError("Qwen-Image-2.1 ControlNet is not implemented.")
+        if self.model_type == "moss_image":
+            raise ValueError("MOSS-Image ControlNet is not implemented.")
         self.diffusion.create_controlnet(config)
         self.controlnet_train = config.train
 
@@ -362,6 +389,8 @@ class BaseTrainer:
         else:
             mask = None
 
+        if hasattr(self.scheduler, "configure_latents"):
+            self.scheduler.configure_latents(latents.shape)
         timesteps = self.scheduler.sample_timesteps(latents.shape[0], self.device, self.min_t, self.max_t)
         noise = self.sample_noise(latents)
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
@@ -522,13 +551,22 @@ class BaseTrainer:
         return text_output
 
     def _init_sample_latents(self, batch_size, height, width, frames, images):
+        if self.model_type == "moss_image":
+            if height <= 0 or width <= 0 or height % 16 or width % 16 or frames is not None:
+                raise ValueError("MOSS-Image requires still images with positive dimensions divisible by 16.")
+            if images is None:
+                # Noise is subsequently sampled in fp32, matching the official pipeline.
+                return torch.zeros(batch_size, 128, height // 16, width // 16, device=self.device, dtype=torch.float32)
+        if self.model_type == "qwenimage21":
+            if height % 32 or width % 32 or frames is not None:
+                raise ValueError("Qwen-Image-2.1 requires still images with dimensions divisible by 32.")
         if images is None:
-            if self.model_type == "anima":
-                shape = (batch_size, self.input_channels, 1, height // 8, width // 8)
+            if self.video_vae:
+                shape = (batch_size, self.input_channels, 1, height // self.latent_scale_factor, width // self.latent_scale_factor)
             elif frames is None:
-                shape = (batch_size, self.input_channels, height // 8, width // 8)
+                shape = (batch_size, self.input_channels, height // self.latent_scale_factor, width // self.latent_scale_factor)
             else:
-                shape = (batch_size, self.input_channels, (frames + 3) // 4, height // 8, width // 8)
+                shape = (batch_size, self.input_channels, (frames + 3) // 4, height // self.latent_scale_factor, width // self.latent_scale_factor)
             latents = torch.ones(shape, device=self.device, dtype=self.autocast_dtype)
         else:
             with torch.autocast("cuda", dtype=self.vae_dtype):
@@ -550,6 +588,9 @@ class BaseTrainer:
         return controlnet_hint
 
     def _denoising_loop(self, latents, timesteps, text_output, guidance_scale, controlnet_hint, all_samples):
+        if self.model_type == "moss_image":
+            from modules.moss_image_sampling import denoising_loop
+            return denoising_loop(self, latents, timesteps, text_output, guidance_scale, controlnet_hint, all_samples)
         output_images = []
         progress_bar = tqdm(timesteps, desc="Sampling", leave=False, total=len(timesteps))
 
@@ -605,10 +646,11 @@ class BaseTrainer:
         negative_prompt = self._resolve_prompt(negative_prompt)
         text_output = self._cached_text_output(prompt, negative_prompt, batch_size, guidance_scale)
 
+        latents = self._init_sample_latents(batch_size, height, width, frames, images)
+        if hasattr(self.scheduler, "configure_latents"):
+            self.scheduler.configure_latents(latents.shape)
         timesteps = self.scheduler.set_timesteps(num_inference_steps, self.device)
         timesteps = timesteps[int(num_inference_steps*(1-denoise)):]
-
-        latents = self._init_sample_latents(batch_size, height, width, frames, images)
         noise = torch.randn_like(latents)
         latents = self.scheduler.add_noise(latents, noise, timesteps[0])
 

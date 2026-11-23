@@ -8,6 +8,7 @@ import logging
 import random
 import numpy as np
 from typing import Optional
+from modules.text.base import BaseTextOutput
 
 logger = logging.getLogger("データセットちゃん")
 
@@ -28,7 +29,8 @@ class BaseDataset(Dataset):
         prompt: Optional[str] = None,
         prefix: str = "",
         shuffle: bool = False,
-        ucg: float = 0.0
+        ucg: float = 0.0,
+        model_type: str = "sdxl"
     ):
 
         with open(os.path.join(path, metadata), "r") as f:
@@ -40,6 +42,11 @@ class BaseDataset(Dataset):
         else:
             self.original_size = {}
 
+        from modules.model_registry import get_model_spec
+        spec = get_model_spec(model_type)
+        self.latent_scale_factor = spec.latent_scale_factor
+        self.image_mode = spec.image_mode
+        self.model_type = model_type
         self.path = path
         self.batch_size = batch_size
         self.text_model = text_model
@@ -69,12 +76,17 @@ class BaseDataset(Dataset):
             target_height, target_width = batch["images"].shape[2:]
         else:
             batch["latents"] = self.get_latents(samples, self.latent)
-            target_height, target_width = batch["latents"].shape[2]*8, batch["latents"].shape[3]*8
+            target_height, target_width = (n * self.latent_scale_factor for n in batch["latents"].shape[-2:])
 
         batch["size_condition"] = self.get_size_condition(samples, target_height, target_width)
 
         if self.text_emb:
-            batch["encoder_hidden_states"], batch["pooled_outputs"] = self.get_text_embeddings(samples, self.text_emb if isinstance(self.text_emb, str) else "text_emb")
+            text_output = self.get_text_output(samples, self.text_emb if isinstance(self.text_emb, str) else "text_emb")
+            batch["encoder_hidden_states"] = text_output.encoder_hidden_states
+            if text_output.pooled_output is not None:
+                batch["pooled_outputs"] = text_output.pooled_output
+            if text_output.attention_mask is not None:
+                batch["attention_mask"] = text_output.attention_mask
         else:
             batch["captions"] = self.get_captions(samples, self.caption)
 
@@ -103,7 +115,7 @@ class BaseDataset(Dataset):
         ])
 
         for sample in samples:
-            image = Image.open(os.path.join(self.path, dir, sample + ".png")).convert("RGB")
+            image = Image.open(os.path.join(self.path, dir, sample + ".png")).convert(getattr(self, "image_mode", "RGB"))
             image = transform(image)
             images.append(image)
 
@@ -158,21 +170,28 @@ class BaseDataset(Dataset):
             size_condition.append(torch.tensor(size_list))
         return torch.stack(size_condition)
     
-    def get_text_embeddings(self, samples, dir="text_emb"):
-        files = [np.load(os.path.join(self.path, dir, sample + ".npz")) for sample in samples]
-        encoder_hidden_states = torch.stack([torch.tensor(f["encoder_hidden_state"]) for f in files])
-        pooled_outputs = torch.stack([torch.tensor(f["pooled_output"]) for f in files])
-
-        for i in range(len(samples)):
+    def get_text_output(self, samples, dir="text_emb"):
+        outputs = []
+        for sample in samples:
             if random.random() < self.ucg:
-                uncond = self.text_model.uncond_output
-                pooled_outputs[i] = uncond.pooled_output.clone()
-                encoder_hidden_states[i] = uncond.encoder_hidden_states.clone()
+                outputs.append(self.text_model.uncond_output.clone())
+                continue
+            with np.load(os.path.join(self.path, dir, sample + ".npz")) as f:
+                hidden = torch.from_numpy(f["encoder_hidden_state"].copy()).float().unsqueeze(0)
+                pooled = torch.from_numpy(f["pooled_output"].copy()).float().unsqueeze(0) if "pooled_output" in f else None
+                mask = torch.from_numpy(f["attention_mask"].copy()).bool().unsqueeze(0) if "attention_mask" in f else None
+                if getattr(self, "model_type", "sdxl") == "qwenimage21" and mask is None:
+                    raise ValueError("Qwen-Image-2.1 text caches require attention_mask; regenerate them.")
+                if getattr(self, "model_type", "sdxl") == "moss_image" and mask is None:
+                    raise ValueError("MOSS-Image text caches require attention_mask; regenerate them.")
+                outputs.append(BaseTextOutput(hidden, pooled, mask))
+        return BaseTextOutput.cat(outputs)
 
-        encoder_hidden_states = encoder_hidden_states.to(memory_format=torch.contiguous_format).float()
-        pooled_outputs = pooled_outputs.to(memory_format=torch.contiguous_format).float()
-        return encoder_hidden_states, pooled_outputs
-    
+    def get_text_embeddings(self, samples, dir="text_emb"):
+        # Backwards-compatible helper for dataset subclasses.
+        output = self.get_text_output(samples, dir)
+        return output.encoder_hidden_states, output.pooled_output
+
     def get_control(self, samples, dir="control"):
         images = []
         transform = transforms.ToTensor()
